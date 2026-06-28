@@ -10,42 +10,30 @@ anything to run it.
 
 ## Quick start: run one game and view the draft shot chart
 
-From the `pwhl-shot-tracking` directory, copy and run this block. Replace only the
-API key and YouTube URL:
+From the `pwhl-shot-tracking` directory, run one command:
 
 ```sh
-export PYTHONPATH=src
-export GEMINI_API_KEY='YOUR_GOOGLE_AI_STUDIO_KEY'
-export VIDEO_URL='https://www.youtube.com/watch?v=PUBLIC_PWHL_GAME'
-
-python3 -m pwhl_shot_tracking init \
-  --config game.json \
-  --video-url "$VIDEO_URL"
-
-python3 -m pwhl_shot_tracking fetch --config game.json
-python3 -m pwhl_shot_tracking discover-anchors --config game.json --yes
-python3 -m pwhl_shot_tracking sync --config game.json
-python3 -m pwhl_shot_tracking tag --config game.json --yes
-python3 -m pwhl_shot_tracking render \
-  --config game.json \
-  --output shot-chart.png
-
-open shot-chart.png
+./pwhl-shot-tracking run-game --api-key 'YOUR_GOOGLE_AI_STUDIO_KEY' --url 'https://www.youtube.com/watch?v=PUBLIC_PWHL_GAME' --open
 ```
 
-`shot-chart.png` is the output. The last command opens it on macOS. The chart is
-marked **DRAFT** because it uses Gemini's labels before human review.
+That command runs the complete default pipeline and opens `shot-chart.png`. The
+chart is marked **DRAFT** because it uses Gemini's labels before human review.
 
 Only the key and public game URL are required:
 
-- `init` resolves the HockeyTech game ID and VOD duration automatically.
+- the HockeyTech game ID and VOD duration are resolved automatically;
 - `fetch` downloads the official event/shot coordinates.
-- `discover-anchors` maps the broadcast clock to VOD time.
-- `tag` makes two Gemini calls per synchronized shot.
-- `render` draws the model-only draft chart directly from those tags.
+- Gemini maps the broadcast clock and makes two tagging calls per synchronized
+  shot;
+- the result is rendered to `shot-chart.png`.
 
-The two `--yes` flags acknowledge billable Gemini calls. Anchor and clip audits
-are saved under `work/<game-id>/`; completed shot tags are cached on reruns.
+For a cheaper plumbing test, add `--limit 5`; the resulting chart will contain
+only those tagged shots. Anchor and clip audits are saved under
+`work/<game-id>/`, and completed shot tags are cached on reruns.
+
+Security note: a value passed through `--api-key` can appear in shell history and
+local process listings. It is used only for the current process and is never
+written to `game.json`, CSV output, or audit files.
 
 ## What is implemented
 

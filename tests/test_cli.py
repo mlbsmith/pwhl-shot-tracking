@@ -1,4 +1,5 @@
 import argparse
+import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -9,6 +10,7 @@ from pwhl_shot_tracking.cli import (
     command_finalize,
     command_init,
     command_render,
+    command_run_game,
 )
 from pwhl_shot_tracking.clock import Anchor
 from pwhl_shot_tracking.config import create_config, load_config, work_path
@@ -16,6 +18,56 @@ from pwhl_shot_tracking.utils import read_json, write_csv, write_json
 
 
 class CliTests(unittest.TestCase):
+    def test_run_game_orchestrates_defaults_without_persisting_key(self):
+        with tempfile.TemporaryDirectory() as directory:
+            config_path = Path(directory) / "game.json"
+            output_path = Path(directory) / "shot-chart.png"
+            create_config(
+                config_path,
+                "340",
+                "https://www.youtube.com/watch?v=AbC_123-xY",
+                "shots_on_goal",
+            )
+            arguments = argparse.Namespace(
+                api_key="test-secret-key",
+                video_url="https://youtu.be/AbC_123-xY",
+                config=str(config_path),
+                output=str(output_path),
+                shot_universe="shots_on_goal",
+                chunk_seconds=300,
+                limit=None,
+                open_chart=False,
+            )
+
+            def tag_side_effect(_):
+                self.assertEqual("test-secret-key", os.environ.get("GEMINI_API_KEY"))
+                return 0
+
+            with patch.dict(os.environ, {"GEMINI_API_KEY": "previous-key"}), patch(
+                "pwhl_shot_tracking.cli.command_fetch", return_value=0
+            ) as fetch, patch(
+                "pwhl_shot_tracking.cli.command_discover_anchors", return_value=0
+            ) as discover, patch(
+                "pwhl_shot_tracking.cli.command_sync", return_value=0
+            ) as sync, patch(
+                "pwhl_shot_tracking.cli.command_tag", side_effect=tag_side_effect
+            ) as tag, patch(
+                "pwhl_shot_tracking.cli.command_render", return_value=0
+            ) as render:
+                result = command_run_game(arguments)
+                restored_key = os.environ.get("GEMINI_API_KEY")
+
+            config_text = config_path.read_text(encoding="utf-8")
+
+        self.assertEqual(0, result)
+        self.assertEqual("previous-key", restored_key)
+        self.assertNotIn("test-secret-key", config_text)
+        fetch.assert_called_once()
+        discover.assert_called_once()
+        sync.assert_called_once()
+        tag.assert_called_once()
+        render.assert_called_once()
+
     def test_anchor_discovery_uses_duration_detected_during_init(self):
         with tempfile.TemporaryDirectory() as directory:
             config_path = Path(directory) / "game.json"

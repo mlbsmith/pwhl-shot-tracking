@@ -1,5 +1,6 @@
 import argparse
 import math
+import os
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -11,7 +12,7 @@ from .feed import fetch_game_feed, normalize_shots
 from .gemini import GeminiClient, discover_anchors
 from .pipeline import tag_shots
 from .render import render_shot_map
-from .resolver import GameResolutionError, resolve_game_id
+from .resolver import GameResolutionError, extract_youtube_video_id, resolve_game_id
 from .utils import (
     api_keys_from_environment,
     as_bool,
@@ -77,6 +78,89 @@ def command_resolve_game(args: argparse.Namespace) -> int:
         return 1
     print_json(report)
     return 0
+
+
+def command_run_game(args: argparse.Namespace) -> int:
+    api_key = str(args.api_key or "").strip()
+    if not api_key:
+        raise ValueError("--api-key is required")
+    config_path = Path(args.config)
+    previous_key = os.environ.get("GEMINI_API_KEY")
+    os.environ["GEMINI_API_KEY"] = api_key
+    try:
+        if config_path.exists():
+            existing = load_config(config_path)
+            existing_video_id = extract_youtube_video_id(existing["video_url"])
+            requested_video_id = extract_youtube_video_id(args.video_url)
+            if existing_video_id != requested_video_id:
+                raise ValueError(
+                    "%s already targets another video; pass --config with a different path"
+                    % config_path
+                )
+            print("Reusing %s for HockeyTech game %s" % (config_path, existing["game_id"]))
+        else:
+            command_init(
+                argparse.Namespace(
+                    config=str(config_path),
+                    game_id=None,
+                    video_url=args.video_url,
+                    shot_universe=args.shot_universe,
+                    force=False,
+                )
+            )
+
+        config = load_config(config_path)
+        command_fetch(argparse.Namespace(config=str(config_path), source_json=None))
+
+        anchors_path = work_path(config, "sync", "anchors.csv")
+        if anchors_path.exists():
+            print("Reusing scorebug anchors from %s" % anchors_path)
+        else:
+            command_discover_anchors(
+                argparse.Namespace(
+                    config=str(config_path),
+                    start=0.0,
+                    end=None,
+                    chunk_seconds=args.chunk_seconds,
+                    output=None,
+                    yes=True,
+                )
+            )
+
+        command_sync(
+            argparse.Namespace(
+                config=str(config_path),
+                shots=None,
+                anchors=None,
+            )
+        )
+        tag_status = command_tag(
+            argparse.Namespace(
+                config=str(config_path),
+                limit=args.limit,
+                force=False,
+                yes=True,
+            )
+        )
+        output_path = Path(args.output).resolve()
+        command_render(
+            argparse.Namespace(
+                config=str(config_path),
+                output=str(output_path),
+                publish=False,
+            )
+        )
+        print("Draft shot chart: %s" % output_path)
+        if args.open_chart:
+            import webbrowser
+
+            webbrowser.open(output_path.as_uri())
+        return tag_status
+    finally:
+        if previous_key is None:
+            os.environ.pop("GEMINI_API_KEY", None)
+        else:
+            os.environ["GEMINI_API_KEY"] = previous_key
 
 
 def command_fetch(args: argparse.Namespace) -> int:
@@ -415,6 +499,24 @@ def print_json(value: Any) -> None:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="pwhl-shot-tracking")
     subparsers = parser.add_subparsers(dest="command", required=True)
+
+    run_game = subparsers.add_parser(
+        "run-game",
+        help="run one public YouTube game through the draft-chart pipeline",
+    )
+    run_game.add_argument(
+        "--api-key",
+        required=True,
+        help="Gemini key; visible to local process listings and shell history",
+    )
+    run_game.add_argument("--url", "--video-url", dest="video_url", required=True)
+    run_game.add_argument("--config", default="game.json")
+    run_game.add_argument("--output", default="shot-chart.png")
+    run_game.add_argument("--shot-universe", choices=sorted(SHOT_UNIVERSES), default="shots_on_goal")
+    run_game.add_argument("--chunk-seconds", type=float, default=300.0)
+    run_game.add_argument("--limit", type=int, help="tag only the first N shots for a cheaper smoke test")
+    run_game.add_argument("--open", dest="open_chart", action="store_true", help="open the PNG after rendering")
+    run_game.set_defaults(func=command_run_game)
 
     resolve = subparsers.add_parser(
         "resolve-game",
