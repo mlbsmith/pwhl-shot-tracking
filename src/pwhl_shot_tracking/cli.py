@@ -6,11 +6,12 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from .clock import anchors_as_rows, assign_active_runs, load_anchors, synchronize_shots
-from .config import SHOT_UNIVERSES, create_config, load_config, work_path
+from .config import DEFAULT_CONFIG, SHOT_UNIVERSES, create_config, load_config, work_path
 from .feed import fetch_game_feed, normalize_shots
 from .gemini import GeminiClient, discover_anchors
 from .pipeline import tag_shots
 from .render import render_shot_map
+from .resolver import GameResolutionError, resolve_game_id
 from .utils import (
     api_keys_from_environment,
     as_bool,
@@ -38,8 +39,43 @@ def command_init(args: argparse.Namespace) -> int:
     path = Path(args.config)
     if path.exists() and not args.force:
         raise FileExistsError("%s already exists; use --force to replace it" % path)
-    create_config(path, args.game_id, args.video_url, args.shot_universe)
+    resolution = None
+    game_id = args.game_id
+    video_url = args.video_url
+    if not game_id:
+        try:
+            resolution = resolve_game_id(video_url, DEFAULT_CONFIG["hockeytech"])
+        except GameResolutionError as error:
+            if error.report:
+                print_json(error.report)
+            raise ValueError("%s; pass --game-id to override" % error)
+        resolution["resolved_at"] = _utc_now()
+        game_id = str(resolution["game_id"])
+        video_url = str(resolution["video"]["canonical_url"])
+        selected = resolution["selected"]
+        print(
+            "Resolved HockeyTech game %s: %s at %s on %s"
+            % (
+                game_id,
+                selected["visiting_team"],
+                selected["home_team"],
+                selected["date_played"],
+            )
+        )
+    create_config(path, game_id, video_url, args.shot_universe, game_resolution=resolution)
     print("Created %s" % path)
+    return 0
+
+
+def command_resolve_game(args: argparse.Namespace) -> int:
+    try:
+        report = resolve_game_id(args.video_url, DEFAULT_CONFIG["hockeytech"])
+    except GameResolutionError as error:
+        if error.report:
+            print_json(error.report)
+        print("ERROR: %s" % error, file=sys.stderr)
+        return 1
+    print_json(report)
     return 0
 
 
@@ -360,9 +396,16 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="pwhl-shot-tracking")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
+    resolve = subparsers.add_parser(
+        "resolve-game",
+        help="resolve a HockeyTech game ID from a public YouTube URL",
+    )
+    resolve.add_argument("--video-url", required=True)
+    resolve.set_defaults(func=command_resolve_game)
+
     init = subparsers.add_parser("init", help="create a game configuration")
     init.add_argument("--config", default="game.json")
-    init.add_argument("--game-id", required=True)
+    init.add_argument("--game-id", help="optional HockeyTech override; otherwise resolved automatically")
     init.add_argument("--video-url", required=True)
     init.add_argument("--shot-universe", choices=sorted(SHOT_UNIVERSES), default="shots_on_goal")
     init.add_argument("--force", action="store_true")

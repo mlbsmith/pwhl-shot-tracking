@@ -65,7 +65,13 @@ def load_config(path: Path) -> Dict[str, Any]:
     return config
 
 
-def create_config(path: Path, game_id: str, video_url: str, shot_universe: str) -> Dict[str, Any]:
+def create_config(
+    path: Path,
+    game_id: str,
+    video_url: str,
+    shot_universe: str,
+    game_resolution: Any = None,
+) -> Dict[str, Any]:
     if shot_universe not in SHOT_UNIVERSES:
         raise ValueError("unknown shot universe: %s" % shot_universe)
     config = _deep_merge(
@@ -77,6 +83,8 @@ def create_config(path: Path, game_id: str, video_url: str, shot_universe: str) 
             "work_dir": "work/%s" % game_id,
         },
     )
+    if game_resolution is not None:
+        config["game_resolution"] = game_resolution
     write_json(path, config)
     return config
 

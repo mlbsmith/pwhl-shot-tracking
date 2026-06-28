@@ -2,13 +2,42 @@ import argparse
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
-from pwhl_shot_tracking.cli import command_finalize
+from pwhl_shot_tracking.cli import command_finalize, command_init
 from pwhl_shot_tracking.config import create_config, load_config, work_path
 from pwhl_shot_tracking.utils import read_json, write_csv, write_json
 
 
 class CliTests(unittest.TestCase):
+    def test_init_resolves_game_id_when_override_is_omitted(self):
+        resolution = {
+            "game_id": "340",
+            "video": {"canonical_url": "https://www.youtube.com/watch?v=AbC_123-xY"},
+            "selected": {
+                "visiting_team": "Minnesota Frost",
+                "home_team": "Montréal Victoire",
+                "date_played": "2026-05-02",
+            },
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            config_path = Path(directory) / "game.json"
+            arguments = argparse.Namespace(
+                config=str(config_path),
+                game_id=None,
+                video_url="https://youtu.be/AbC_123-xY",
+                shot_universe="shots_on_goal",
+                force=False,
+            )
+            with patch("pwhl_shot_tracking.cli.resolve_game_id", return_value=resolution):
+                result = command_init(arguments)
+            config = load_config(config_path)
+
+        self.assertEqual(0, result)
+        self.assertEqual("340", config["game_id"])
+        self.assertEqual("340", config["game_resolution"]["game_id"])
+        self.assertEqual("https://www.youtube.com/watch?v=AbC_123-xY", config["video_url"])
+
     def test_finalize_blocks_publish_when_a_denominator_candidate_is_missing(self):
         with tempfile.TemporaryDirectory() as directory:
             config_path = Path(directory) / "game.json"

@@ -11,6 +11,8 @@ anything to run it.
 ## What is implemented
 
 - Configurable candidate denominator: shots on goal, Fenwick, or all attempts.
+- Automatic HockeyTech game-ID resolution from the YouTube title, publication
+  date, and live PWHL schedules, with ranked evidence and ambiguity refusal.
 - Cached raw HockeyTech response, normalized candidate CSV, and feed hash.
 - Active-clock-run synchronization that never interpolates across a whistle.
 - Manual sync-anchor import or Gemini scorebug-anchor discovery.
@@ -29,15 +31,15 @@ anything to run it.
 
 No secrets are written to disk. A live game run needs:
 
-1. The HockeyTech game ID.
-2. A **public** PWHL YouTube VOD URL. Gemini YouTube ingestion does not accept
+1. A **public** PWHL YouTube VOD URL. Gemini YouTube ingestion does not accept
    private or unlisted videos.
-3. `GEMINI_API_KEY`, or comma-separated `GEMINI_API_KEYS`.
-4. Either scorebug anchors or the VOD's approximate start/end seconds for Gemini
+2. `GEMINI_API_KEY`, or comma-separated `GEMINI_API_KEYS`.
+3. Either scorebug anchors or the VOD's approximate start/end seconds for Gemini
    anchor discovery.
 
-The only credential is the Gemini key. The HockeyTech feed key in the example
-configuration is the public site feed key documented by the PWHL Data Reference.
+The game ID is resolved automatically. The only credential is the Gemini key.
+The HockeyTech feed key in the example configuration is the public site feed key
+documented by the PWHL Data Reference.
 
 ## Run directly
 
@@ -48,12 +50,26 @@ export PYTHONPATH=src
 
 python3 -m pwhl_shot_tracking init \
   --config game.json \
-  --game-id 123 \
   --video-url 'https://www.youtube.com/watch?v=PUBLIC_VIDEO_ID' \
   --shot-universe shots_on_goal
 
 python3 -m pwhl_shot_tracking fetch --config game.json
 ```
+
+`init` reads public YouTube metadata, searches the relevant HockeyTech schedules,
+and stores the selected game plus ranked matching evidence in `game.json`. It
+requires both teams, a strong date match, and a clear lead over the second-ranked
+candidate. It refuses ambiguous links instead of guessing.
+
+To inspect resolution without creating a configuration:
+
+```sh
+python3 -m pwhl_shot_tracking resolve-game \
+  --video-url 'https://www.youtube.com/watch?v=PUBLIC_VIDEO_ID'
+```
+
+If a broadcaster uses an unusual title or publishes the VOD long after the game,
+look up the ID manually and pass `--game-id 123` as an explicit override.
 
 `shots_on_goal` is the default denominator. Use `fenwick` for unblocked attempts
 or `all_attempts` to include blocks. Do not change this after review begins.

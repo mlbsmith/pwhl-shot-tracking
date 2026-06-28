@@ -1,8 +1,8 @@
 {
-  "game_id": "REPLACE_WITH_HOCKEYTECH_GAME_ID",
+  "game_id": "AUTO_RESOLVED_OR_EXPLICIT_HOCKEYTECH_GAME_ID",
   "video_url": "https://www.youtube.com/watch?v=REPLACE_ME",
   "shot_universe": "shots_on_goal",
-  "work_dir": "work/REPLACE_WITH_HOCKEYTECH_GAME_ID",
+  "work_dir": "work/AUTO_RESOLVED_OR_EXPLICIT_HOCKEYTECH_GAME_ID",
   "hockeytech": {
     "base_url": "https://lscluster.hockeytech.com/feed/index.php",
     "client_code": "pwhl",
