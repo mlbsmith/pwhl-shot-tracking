@@ -1,0 +1,9 @@
+__pycache__/
+*.py[cod]
+.venv/
+.DS_Store
+
+# Runtime data and credentials
+work/
+.env
+*.local.json

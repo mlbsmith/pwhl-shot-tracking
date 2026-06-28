@@ -1,0 +1,3 @@
+shot_id,expected_royal_road,example_type,notes
+shot-REPLACE_POSITIVE,true,positive,Known cross-slot goal
+shot-REPLACE_HARD_NEGATIVE,false,hard_negative,Same-side pass below the circles

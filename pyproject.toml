@@ -1,0 +1,14 @@
+[build-system]
+requires = []
+build-backend = "pwhl_shot_tracking.build"
+backend-path = ["src"]
+
+[project]
+name = "pwhl-shot-tracking"
+version = "0.1.0"
+description = "Dependency-free Python proof of concept for PWHL royal-road shot tracking"
+requires-python = ">=3.9"
+dependencies = []
+
+[project.scripts]
+pwhl-shot-tracking = "pwhl_shot_tracking.cli:main"

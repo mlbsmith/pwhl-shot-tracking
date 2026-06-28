@@ -1,0 +1,5 @@
+period,game_clock,video_seconds,clock_running,confidence,run_id,source
+1,19:50,615.0,true,manual,p1-run-001,manual
+1,19:40,625.0,true,manual,p1-run-001,manual
+1,19:32,646.0,true,manual,p1-run-002,manual
+1,19:20,658.0,true,manual,p1-run-002,manual

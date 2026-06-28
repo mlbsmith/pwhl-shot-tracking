@@ -1,0 +1,40 @@
+{
+  "game_id": "REPLACE_WITH_HOCKEYTECH_GAME_ID",
+  "video_url": "https://www.youtube.com/watch?v=REPLACE_ME",
+  "shot_universe": "shots_on_goal",
+  "work_dir": "work/REPLACE_WITH_HOCKEYTECH_GAME_ID",
+  "hockeytech": {
+    "base_url": "https://lscluster.hockeytech.com/feed/index.php",
+    "client_code": "pwhl",
+    "feed_key": "446521baf8c38984",
+    "timeout_seconds": 30
+  },
+  "gemini": {
+    "model": "gemini-3.1-pro-preview",
+    "api_surface": "generateContent",
+    "base_url": "https://generativelanguage.googleapis.com/v1beta",
+    "fps": 8.0,
+    "media_resolution": "MEDIA_RESOLUTION_HIGH",
+    "timeout_seconds": 180,
+    "max_attempts": 4,
+    "max_api_calls_per_run": 120
+  },
+  "clip": {
+    "seconds_before": 12.0,
+    "seconds_after": 2.0
+  },
+  "clock": {
+    "regulation_period_seconds": 1200,
+    "overtime_period_seconds": 1200,
+    "max_extrapolation_seconds": 2.0,
+    "max_stoppage_gap_seconds": 3.0
+  },
+  "validation": {
+    "minimum_precision": 0.85,
+    "minimum_recall": 0.8
+  },
+  "team_colors": {
+    "DEFAULT_HOME": "#6D2077",
+    "DEFAULT_AWAY": "#1B365D"
+  }
+}
