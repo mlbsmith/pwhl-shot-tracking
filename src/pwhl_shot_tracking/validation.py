@@ -9,7 +9,7 @@ def feed_shot_zone(row: Dict[str, Any]) -> str:
     if x is None or y is None:
         return "unknown"
     attacks_left = x < 300
-    goal_x = 60.0 if attacks_left else 540.0
+    goal_x = 33.0 if attacks_left else 567.0
     longitudinal = abs(x - goal_x)
     lateral_signed = y - 150.0
     lateral = abs(lateral_signed)

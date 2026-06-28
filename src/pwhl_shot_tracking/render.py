@@ -111,6 +111,116 @@ class Canvas:
             for start, end in zip(points, points[1:]):
                 self.line(start[0], start[1], end[0], end[1], color, 2)
 
+    def ellipse(
+        self,
+        cx: int,
+        cy: int,
+        radius_x: int,
+        radius_y: int,
+        color: Color,
+        fill: bool = True,
+    ) -> None:
+        radius_x = max(1, radius_x)
+        radius_y = max(1, radius_y)
+        if fill:
+            for dy in range(-radius_y, radius_y + 1):
+                ratio = 1.0 - (dy * dy) / float(radius_y * radius_y)
+                span = int(round(radius_x * math.sqrt(max(0.0, ratio))))
+                self.rect(cx - span, cy + dy, span * 2 + 1, 1, color, True)
+        else:
+            self.ellipse_arc(cx, cy, radius_x, radius_y, 0.0, 2 * math.pi, color, 2)
+
+    def ellipse_arc(
+        self,
+        cx: int,
+        cy: int,
+        radius_x: int,
+        radius_y: int,
+        start_angle: float,
+        end_angle: float,
+        color: Color,
+        width: int = 2,
+    ) -> None:
+        sweep = end_angle - start_angle
+        steps = max(12, int(max(radius_x, radius_y) * abs(sweep) / 3))
+        points = [
+            (
+                int(round(cx + radius_x * math.cos(start_angle + sweep * index / steps))),
+                int(round(cy + radius_y * math.sin(start_angle + sweep * index / steps))),
+            )
+            for index in range(steps + 1)
+        ]
+        for start, end in zip(points, points[1:]):
+            self.line(start[0], start[1], end[0], end[1], color, width)
+
+    def rounded_rect(
+        self,
+        x: int,
+        y: int,
+        width: int,
+        height: int,
+        radius: int,
+        color: Color,
+        fill: bool = True,
+        stroke_width: int = 2,
+    ) -> None:
+        radius = max(1, min(radius, width // 2, height // 2))
+        if fill:
+            self.rect(x + radius, y, width - 2 * radius, height, color, True)
+            self.rect(x, y + radius, width, height - 2 * radius, color, True)
+            for cx, cy in (
+                (x + radius, y + radius),
+                (x + width - radius, y + radius),
+                (x + radius, y + height - radius),
+                (x + width - radius, y + height - radius),
+            ):
+                self.circle(cx, cy, radius, color, True)
+            return
+        self.line(x + radius, y, x + width - radius, y, color, stroke_width)
+        self.line(x + width, y + radius, x + width, y + height - radius, color, stroke_width)
+        self.line(x + width - radius, y + height, x + radius, y + height, color, stroke_width)
+        self.line(x, y + height - radius, x, y + radius, color, stroke_width)
+        self.ellipse_arc(
+            x + radius,
+            y + radius,
+            radius,
+            radius,
+            math.pi,
+            1.5 * math.pi,
+            color,
+            stroke_width,
+        )
+        self.ellipse_arc(
+            x + width - radius,
+            y + radius,
+            radius,
+            radius,
+            1.5 * math.pi,
+            2 * math.pi,
+            color,
+            stroke_width,
+        )
+        self.ellipse_arc(
+            x + width - radius,
+            y + height - radius,
+            radius,
+            radius,
+            0.0,
+            0.5 * math.pi,
+            color,
+            stroke_width,
+        )
+        self.ellipse_arc(
+            x + radius,
+            y + height - radius,
+            radius,
+            radius,
+            0.5 * math.pi,
+            math.pi,
+            color,
+            stroke_width,
+        )
+
     def line(self, x0: int, y0: int, x1: int, y1: int, color: Color, width: int = 1) -> None:
         dx = abs(x1 - x0)
         sx = 1 if x0 < x1 else -1
@@ -183,6 +293,187 @@ def _feed_to_canvas(x: float, y: float, rink: Tuple[int, int, int, int]) -> Tupl
     return int(round(left + x / 600.0 * width)), int(round(top + y / 300.0 * height))
 
 
+def _clamp_to_rink(
+    x: int,
+    y: int,
+    rink: Tuple[int, int, int, int],
+    margin: int = 18,
+) -> Tuple[int, int]:
+    left, top, width, height = rink
+    radius = int(round(width * 84 / 600.0))
+    x = min(max(x, left + margin), left + width - margin)
+    y = min(max(y, top + margin), top + height - margin)
+    inner_radius = max(1, radius - margin)
+    corner_x = left + radius if x < left + radius else left + width - radius
+    corner_y = top + radius if y < top + radius else top + height - radius
+    in_corner_x = x < left + radius or x > left + width - radius
+    in_corner_y = y < top + radius or y > top + height - radius
+    if in_corner_x and in_corner_y:
+        dx = x - corner_x
+        dy = y - corner_y
+        distance = math.hypot(dx, dy)
+        if distance > inner_radius:
+            x = int(round(corner_x + dx / distance * inner_radius))
+            y = int(round(corner_y + dy / distance * inner_radius))
+    return x, y
+
+
+def _draw_rink(canvas: Canvas, rink: Tuple[int, int, int, int]) -> None:
+    left, top, width, height = rink
+    ice = (250, 253, 255)
+    boards = (42, 69, 86)
+    red = (204, 45, 55)
+    blue = (34, 94, 168)
+    crease = (211, 235, 248)
+    # The feed grid converts to a 200 x 85 foot rink:
+    #   x_feet = (x - 300) / 3
+    #   y_feet = (y - 150) * 85 / 300
+    # Keeping that aspect ratio makes regulation circles circular on the PNG.
+    corner_radius = int(round(width * 84 / 600.0))  # 28-foot board radius
+
+    canvas.rounded_rect(left, top, width, height, corner_radius, ice, True)
+
+    # Creases sit in front of the goal lines; erase the back half so they are
+    # genuine semicircles rather than full ovals.
+    left_goal = _feed_to_canvas(33, 150, rink)
+    right_goal = _feed_to_canvas(567, 150, rink)
+    crease_rx = int(round(width * 18 / 600.0))
+    crease_ry = int(round(height * 22 / 300.0))
+    for goal_x, goal_y, direction in (
+        (left_goal[0], left_goal[1], 1),
+        (right_goal[0], right_goal[1], -1),
+    ):
+        canvas.ellipse(goal_x, goal_y, crease_rx, crease_ry, crease, True)
+        if direction > 0:
+            canvas.rect(goal_x - crease_rx, goal_y - crease_ry, crease_rx, crease_ry * 2 + 1, ice, True)
+            canvas.ellipse_arc(
+                goal_x,
+                goal_y,
+                crease_rx,
+                crease_ry,
+                -0.5 * math.pi,
+                0.5 * math.pi,
+                red,
+                2,
+            )
+        else:
+            canvas.rect(goal_x + 1, goal_y - crease_ry, crease_rx, crease_ry * 2 + 1, ice, True)
+            canvas.ellipse_arc(
+                goal_x,
+                goal_y,
+                crease_rx,
+                crease_ry,
+                0.5 * math.pi,
+                1.5 * math.pi,
+                red,
+                2,
+            )
+
+    # Goal, blue, and centre lines in the HockeyTech 600 x 300 coordinate frame.
+    def vertical_bounds(px: int) -> Tuple[int, int]:
+        if px < left + corner_radius:
+            dx = left + corner_radius - px
+        elif px > left + width - corner_radius:
+            dx = px - (left + width - corner_radius)
+        else:
+            return top, top + height
+        inset = corner_radius - math.sqrt(max(0.0, corner_radius * corner_radius - dx * dx))
+        return int(round(top + inset)), int(round(top + height - inset))
+
+    for feed_x, color, thickness in (
+        (33, red, 3),
+        (225, blue, 6),
+        (300, red, 4),
+        (375, blue, 6),
+        (567, red, 3),
+    ):
+        px, _ = _feed_to_canvas(feed_x, 0, rink)
+        line_top, line_bottom = vertical_bounds(px)
+        canvas.line(px, line_top + 3, px, line_bottom - 3, color, thickness)
+
+    faceoff_radius_x = int(round(width * 45 / 600.0))  # 15 feet
+    faceoff_radius_y = int(round(height * 53 / 300.0))
+    faceoff_centres = [(93, 72), (93, 228), (507, 72), (507, 228)]
+    for feed_x, feed_y in faceoff_centres:
+        cx, cy = _feed_to_canvas(feed_x, feed_y, rink)
+        canvas.ellipse(cx, cy, faceoff_radius_x, faceoff_radius_y, red, False)
+        canvas.circle(cx, cy, 7, red, True)
+        tick = 13
+        canvas.line(
+            cx - faceoff_radius_x - tick,
+            cy,
+            cx - faceoff_radius_x + tick,
+            cy,
+            red,
+            2,
+        )
+        canvas.line(
+            cx + faceoff_radius_x - tick,
+            cy,
+            cx + faceoff_radius_x + tick,
+            cy,
+            red,
+            2,
+        )
+
+    for feed_x, feed_y in ((240, 72), (240, 228), (360, 72), (360, 228)):
+        cx, cy = _feed_to_canvas(feed_x, feed_y, rink)
+        canvas.circle(cx, cy, 7, red, True)
+
+    centre_x, centre_y = _feed_to_canvas(300, 150, rink)
+    canvas.ellipse(
+        centre_x,
+        centre_y,
+        faceoff_radius_x,
+        faceoff_radius_y,
+        blue,
+        False,
+    )
+    canvas.circle(centre_x, centre_y, 8, blue, True)
+
+    # Nets are behind each goal line and use rounded backs.
+    net_rx = int(round(width * 18 / 600.0))
+    net_ry = int(round(height * 11 / 300.0))
+    canvas.ellipse_arc(
+        left_goal[0],
+        left_goal[1],
+        net_rx,
+        net_ry,
+        0.5 * math.pi,
+        1.5 * math.pi,
+        red,
+        3,
+    )
+    canvas.line(
+        left_goal[0],
+        left_goal[1] - net_ry,
+        left_goal[0],
+        left_goal[1] + net_ry,
+        red,
+        3,
+    )
+    canvas.ellipse_arc(
+        right_goal[0],
+        right_goal[1],
+        net_rx,
+        net_ry,
+        -0.5 * math.pi,
+        0.5 * math.pi,
+        red,
+        3,
+    )
+    canvas.line(
+        right_goal[0],
+        right_goal[1] - net_ry,
+        right_goal[0],
+        right_goal[1] + net_ry,
+        red,
+        3,
+    )
+
+    canvas.rounded_rect(left, top, width, height, corner_radius, boards, False, 4)
+
+
 def _pass_origin(row: Dict[str, Any]) -> Optional[Tuple[float, float]]:
     confidence = str(row.get("tag_pass_geometry_confidence") or "")
     longitudinal = optional_float(row.get("tag_pass_origin_longitudinal_pct"))
@@ -192,10 +483,10 @@ def _pass_origin(row: Dict[str, Any]) -> Optional[Tuple[float, float]]:
         return None
     attacks_left = shot_x < 300
     if attacks_left:
-        x = 60.0 + longitudinal / 100.0 * 165.0
+        x = 33.0 + longitudinal / 100.0 * 192.0
         y = 300.0 - lateral / 100.0 * 300.0
     else:
-        x = 540.0 - longitudinal / 100.0 * 165.0
+        x = 567.0 - longitudinal / 100.0 * 192.0
         y = lateral / 100.0 * 300.0
     return x, y
 
@@ -208,29 +499,8 @@ def render_shot_map(
 ) -> Dict[str, Any]:
     materialized = list(rows)
     canvas = Canvas(1800, 1050, (242, 246, 249))
-    rink = (90, 190, 1620, 810)
-    left, top, width, height = rink
-    canvas.rect(left, top, width, height, (250, 253, 255), True)
-    canvas.rect(left, top, width, height, (69, 93, 112), False)
-
-    # Standard rink reference lines in the feed's 600 x 300 coordinate space.
-    for feed_x, color, thickness in [
-        (60, (190, 45, 55), 4),
-        (225, (34, 94, 168), 5),
-        (300, (190, 45, 55), 4),
-        (375, (34, 94, 168), 5),
-        (540, (190, 45, 55), 4),
-    ]:
-        px, _ = _feed_to_canvas(feed_x, 0, rink)
-        canvas.line(px, top, px, top + height, color, thickness)
-    center_y = _feed_to_canvas(0, 150, rink)[1]
-    for x in range(left, left + width, 28):
-        canvas.line(x, center_y, min(x + 14, left + width), center_y, (160, 172, 181), 2)
-    for feed_x in (100, 203, 397, 500):
-        for feed_y in (75, 225):
-            cx, cy = _feed_to_canvas(feed_x, feed_y, rink)
-            canvas.circle(cx, cy, 82, (210, 65, 75), False)
-    canvas.circle(left + width // 2, top + height // 2, 82, (34, 94, 168), False)
+    rink = (90, 220, 1620, 689)
+    _draw_rink(canvas, rink)
 
     teams = []
     for row in materialized:
@@ -251,7 +521,7 @@ def render_shot_map(
         y = optional_float(row.get("y"))
         if x is None or y is None:
             continue
-        px, py = _feed_to_canvas(x, y, rink)
+        px, py = _clamp_to_rink(*_feed_to_canvas(x, y, rink), rink)
         canvas.circle(px, py, 6, (166, 177, 186), True)
         final_value = row.get("final_royal_road")
         royal = as_bool(final_value) if final_value not in ("", None) else as_bool(row.get("tag_royal_road"))
@@ -261,12 +531,15 @@ def render_shot_map(
     for row in royal_rows:
         x = float(row["x"])
         y = float(row["y"])
-        px, py = _feed_to_canvas(x, y, rink)
+        px, py = _clamp_to_rink(*_feed_to_canvas(x, y, rink), rink)
         team = str(row.get("team_code") or row.get("team_id") or "TEAM")
         color = colors[team]
         origin = _pass_origin(row)
         if origin is not None:
-            ox, oy = _feed_to_canvas(origin[0], origin[1], rink)
+            ox, oy = _clamp_to_rink(
+                *_feed_to_canvas(origin[0], origin[1], rink),
+                rink,
+            )
             canvas.arrow(ox, oy, px, py, color, 5)
         canvas.circle(px, py, 14, (255, 255, 255), True)
         canvas.circle(px, py, 11, color, True)
