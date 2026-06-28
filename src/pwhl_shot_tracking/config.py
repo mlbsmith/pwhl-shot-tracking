@@ -22,7 +22,7 @@ DEFAULT_CONFIG = {
         "media_resolution": "MEDIA_RESOLUTION_HIGH",
         "timeout_seconds": 180,
         "max_attempts": 4,
-        "max_api_calls_per_run": 120,
+        "max_api_calls_per_run": 160,
     },
     "clip": {"seconds_before": 12.0, "seconds_after": 2.0},
     "clock": {

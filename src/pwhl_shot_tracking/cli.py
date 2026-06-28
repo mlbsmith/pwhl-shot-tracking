@@ -103,22 +103,32 @@ def command_fetch(args: argparse.Namespace) -> int:
 
 def command_discover_anchors(args: argparse.Namespace) -> int:
     config = _config(args)
-    if args.end <= args.start:
+    start = float(args.start)
+    end_value = args.end
+    if end_value is None:
+        end_value = config.get("game_resolution", {}).get("video", {}).get("duration_seconds")
+        if end_value is None:
+            raise ValueError(
+                "video duration is unavailable; pass --end with the VOD duration in seconds"
+            )
+        print("Using detected VOD duration: %ss" % end_value)
+    end = float(end_value)
+    if end <= start:
         raise ValueError("--end must be greater than --start")
     if args.chunk_seconds <= 0 or args.chunk_seconds > 600:
         raise ValueError("--chunk-seconds must be between 1 and 600")
-    call_count = int(math.ceil((args.end - args.start) / args.chunk_seconds))
+    call_count = int(math.ceil((end - start) / args.chunk_seconds))
     cap = int(config["gemini"]["max_api_calls_per_run"])
     if call_count > cap:
         raise ValueError("anchor discovery needs %d calls, above configured cap %d" % (call_count, cap))
     if not args.yes:
         raise ValueError("anchor discovery makes %d Gemini calls; rerun with --yes" % call_count)
-    client = GeminiClient(config) if calls else None
+    client = GeminiClient(config)
     anchors = []
     audits = []
-    cursor = float(args.start)
-    while cursor < args.end:
-        chunk_end = min(float(args.end), cursor + float(args.chunk_seconds))
+    cursor = start
+    while cursor < end:
+        chunk_end = min(end, cursor + float(args.chunk_seconds))
         discovered, audit = discover_anchors(client, cursor, chunk_end)
         anchors.extend(discovered)
         audit_path = work_path(
@@ -138,7 +148,7 @@ def command_discover_anchors(args: argparse.Namespace) -> int:
         work_path(config, "sync", "discovery_report.json"),
         {
             "created_at": _utc_now(),
-            "range": {"start_seconds": args.start, "end_seconds": args.end},
+            "range": {"start_seconds": start, "end_seconds": end},
             "chunk_seconds": args.chunk_seconds,
             "api_call_count": call_count,
             "anchor_count": len(normalized),
@@ -343,10 +353,19 @@ def command_finalize(args: argparse.Namespace) -> int:
 def command_render(args: argparse.Namespace) -> int:
     config = _config(args)
     final_path = work_path(config, "final.csv")
-    if not final_path.exists():
-        raise FileNotFoundError("run finalize before render")
-    validation_report = read_json(work_path(config, "validation_report.json"))
-    publishable = bool(validation_report.get("thresholds_passed"))
+    validation_path = work_path(config, "validation_report.json")
+    if final_path.exists():
+        rows = read_csv(final_path)
+        validation_report = read_json(validation_path) if validation_path.exists() else {}
+        publishable = bool(validation_report.get("thresholds_passed"))
+        source_rows = "manual_final"
+    else:
+        tagged_path = _tagged_path(config)
+        if not tagged_path.exists():
+            raise FileNotFoundError("run tag before render")
+        rows = read_csv(tagged_path)
+        publishable = False
+        source_rows = "model_tags"
     if args.publish and not publishable:
         raise ValueError("publish rendering refused: manual review or validation thresholds are incomplete")
     output_path = (
@@ -354,8 +373,9 @@ def command_render(args: argparse.Namespace) -> int:
         if args.output
         else work_path(config, "royal_road_%s.png" % config["game_id"])
     )
-    report = render_shot_map(read_csv(final_path), config, output_path, publishable)
+    report = render_shot_map(rows, config, output_path, publishable)
     report["created_at"] = _utc_now()
+    report["source_rows"] = source_rows
     write_json(work_path(config, "render_report.json"), report)
     print("Wrote %s (%s)" % (output_path, "publishable" if publishable else "DRAFT"))
     return 0
@@ -418,8 +438,8 @@ def build_parser() -> argparse.ArgumentParser:
 
     discover = subparsers.add_parser("discover-anchors", help="read scorebug clocks with Gemini")
     discover.add_argument("--config", default="game.json")
-    discover.add_argument("--start", type=float, required=True)
-    discover.add_argument("--end", type=float, required=True)
+    discover.add_argument("--start", type=float, default=0.0)
+    discover.add_argument("--end", type=float, help="defaults to the duration detected during init")
     discover.add_argument("--chunk-seconds", type=float, default=300.0)
     discover.add_argument("--output")
     discover.add_argument("--yes", action="store_true", help="confirm billable Gemini calls")

@@ -7,3 +7,5 @@ __pycache__/
 work/
 .env
 *.local.json
+game.json
+shot-chart.png

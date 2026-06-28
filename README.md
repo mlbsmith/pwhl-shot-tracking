@@ -2,11 +2,50 @@
 
 Python proof of concept for the Royal-Road Shot-Map plan. It ingests a PWHL
 HockeyTech play-by-play feed, maps game clocks to a public YouTube VOD, classifies
-each candidate with Gemini, requires full-game manual review, and renders a
-high-resolution PNG.
+each candidate with Gemini, and renders a high-resolution PNG. A publishable chart
+requires full-game manual review; a watermarked model-only draft does not.
 
 The implementation uses only the Python 3.9+ standard library. Do not install
 anything to run it.
+
+## Quick start: run one game and view the draft shot chart
+
+From the `pwhl-shot-tracking` directory, copy and run this block. Replace only the
+API key and YouTube URL:
+
+```sh
+export PYTHONPATH=src
+export GEMINI_API_KEY='YOUR_GOOGLE_AI_STUDIO_KEY'
+export VIDEO_URL='https://www.youtube.com/watch?v=PUBLIC_PWHL_GAME'
+
+python3 -m pwhl_shot_tracking init \
+  --config game.json \
+  --video-url "$VIDEO_URL"
+
+python3 -m pwhl_shot_tracking fetch --config game.json
+python3 -m pwhl_shot_tracking discover-anchors --config game.json --yes
+python3 -m pwhl_shot_tracking sync --config game.json
+python3 -m pwhl_shot_tracking tag --config game.json --yes
+python3 -m pwhl_shot_tracking render \
+  --config game.json \
+  --output shot-chart.png
+
+open shot-chart.png
+```
+
+`shot-chart.png` is the output. The last command opens it on macOS. The chart is
+marked **DRAFT** because it uses Gemini's labels before human review.
+
+Only the key and public game URL are required:
+
+- `init` resolves the HockeyTech game ID and VOD duration automatically.
+- `fetch` downloads the official event/shot coordinates.
+- `discover-anchors` maps the broadcast clock to VOD time.
+- `tag` makes two Gemini calls per synchronized shot.
+- `render` draws the model-only draft chart directly from those tags.
+
+The two `--yes` flags acknowledge billable Gemini calls. Anchor and clip audits
+are saved under `work/<game-id>/`; completed shot tags are cached on reruns.
 
 ## What is implemented
 
@@ -27,34 +66,19 @@ anything to run it.
 - Dependency-free 1800×1050 PNG rendering. Arrows appear only when Gemini reports
   medium/high geometry confidence; otherwise the graphic uses honest markers.
 
-## Inputs
+## Inputs and credentials
 
 No secrets are written to disk. A live game run needs:
 
 1. A **public** PWHL YouTube VOD URL. Gemini YouTube ingestion does not accept
    private or unlisted videos.
 2. `GEMINI_API_KEY`, or comma-separated `GEMINI_API_KEYS`.
-3. Either scorebug anchors or the VOD's approximate start/end seconds for Gemini
-   anchor discovery.
 
 The game ID is resolved automatically. The only credential is the Gemini key.
 The HockeyTech feed key in the example configuration is the public site feed key
 documented by the PWHL Data Reference.
 
-## Run directly
-
-From this repository:
-
-```sh
-export PYTHONPATH=src
-
-python3 -m pwhl_shot_tracking init \
-  --config game.json \
-  --video-url 'https://www.youtube.com/watch?v=PUBLIC_VIDEO_ID' \
-  --shot-universe shots_on_goal
-
-python3 -m pwhl_shot_tracking fetch --config game.json
-```
+## Game resolution and advanced workflow
 
 `init` reads public YouTube metadata, searches the relevant HockeyTech schedules,
 and stores the selected game plus ranked matching evidence in `game.json`. It
@@ -89,16 +113,14 @@ Every `run_id` must identify one uninterrupted active-clock run. If `run_id` is
 blank, the program infers boundaries from period changes, repeated clocks, and
 video-time gaps.
 
-Gemini can instead discover anchors in chunks. `--end` is the VOD duration or the
-end of the game broadcast in seconds:
+Gemini can instead discover anchors in chunks. The default end time is the VOD
+duration detected by `init`:
 
 ```sh
 export GEMINI_API_KEY='...'
 
 python3 -m pwhl_shot_tracking discover-anchors \
   --config game.json \
-  --start 0 \
-  --end 7800 \
   --chunk-seconds 300 \
   --yes
 
@@ -159,9 +181,10 @@ python3 -m pwhl_shot_tracking render --config game.json
 python3 -m pwhl_shot_tracking render --config game.json --publish
 ```
 
-The normal render command can produce a watermarked draft. `--publish` refuses to
-render until all candidates are reviewed and precision/recall meet the configured
-thresholds (defaults: 0.85/0.80).
+Before `finalize`, the normal render command reads model tags and produces a
+watermarked draft. After `finalize`, it reads the manually reconciled rows.
+`--publish` refuses to render until all candidates are reviewed and
+precision/recall meet the configured thresholds (defaults: 0.85/0.80).
 
 Use `python3 -m pwhl_shot_tracking doctor --config game.json` to inspect state
 without making network calls.
