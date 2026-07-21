@@ -95,6 +95,26 @@ class ClockTests(unittest.TestCase):
         )
         self.assertIn("discover-anchors", report["suggested_scans"][0]["command"])
 
+    def test_gap_report_handles_inverted_and_anchorless_periods(self):
+        anchors = [
+            # Clock order disagrees with video order (a bad anchor): the
+            # window must still be ascending and cover both sightings.
+            Anchor(1, 1100, 500.0, run_id="one"),
+            Anchor(1, 900, 200.0, run_id="two"),
+            Anchor(3, 1100, 3000.0, run_id="three"),
+        ]
+        rows = [
+            {"shot_id": "inverted", "sync_status": "unmapped", "period": 1, "remaining_seconds": 1000},
+            {"shot_id": "no-anchors", "sync_status": "unmapped", "period": 2, "remaining_seconds": 600},
+        ]
+        report = sync_gap_report(rows, anchors, video_duration_seconds=4000.0, pad_seconds=10.0)
+        by_id = {gap["shot_id"]: gap for gap in report["gaps"]}
+        self.assertEqual(190.0, by_id["inverted"]["scan_start_seconds"])
+        self.assertEqual(510.0, by_id["inverted"]["scan_end_seconds"])
+        # A period with no anchors is bracketed by its neighbouring periods.
+        self.assertEqual(490.0, by_id["no-anchors"]["scan_start_seconds"])
+        self.assertEqual(3010.0, by_id["no-anchors"]["scan_end_seconds"])
+
     def test_sync_builds_offsets_and_review_link(self):
         config = dict(DEFAULT_CONFIG)
         config["video_url"] = "https://www.youtube.com/watch?v=test"

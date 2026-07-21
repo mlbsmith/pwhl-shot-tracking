@@ -271,10 +271,11 @@ def command_sync(args: argparse.Namespace) -> int:
     write_csv(work_path(config, "sync", "anchors_normalized.csv"), anchors_as_rows(anchors))
     write_json(work_path(config, "sync", "report.json"), report)
     print("Sync status: %s" % report["sync_status_counts"])
+    duration = config.get("game_resolution", {}).get("video", {}).get("duration_seconds")
+    gaps = sync_gap_report(synchronized, anchors, duration)
+    # Always rewritten so a recovered sync does not leave stale scan advice.
+    write_json(work_path(config, "sync", "gaps.json"), gaps)
     if report["sync_status_counts"].get("unmapped", 0):
-        duration = config.get("game_resolution", {}).get("video", {}).get("duration_seconds")
-        gaps = sync_gap_report(synchronized, anchors, duration)
-        write_json(work_path(config, "sync", "gaps.json"), gaps)
         print(
             "WARNING: %d unmapped shots cannot be tagged; anchor-coverage gaps are in sync/gaps.json"
             % gaps["unmapped_count"],

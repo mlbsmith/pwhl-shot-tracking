@@ -211,6 +211,18 @@ def sync_gap_report(
                 start = anchor_after.video_seconds - (
                     remaining - anchor_after.remaining_seconds
                 ) - unbounded_slack_seconds
+        if not period_anchors:
+            # A period with no anchors at all: bracket by the neighbouring
+            # periods so the whole intermission-to-intermission span is scanned.
+            earlier = [a.video_seconds for a in anchors if a.period < period]
+            later = [a.video_seconds for a in anchors if a.period > period]
+            start = max(earlier) if earlier else 0.0
+            end = min(later) if later else video_duration_seconds
+        if start is not None and end is not None and start > end:
+            # Inconsistent anchors (clock order disagrees with video order):
+            # scan the whole span covering both sightings rather than emitting
+            # a window discover-anchors would reject.
+            start, end = end, start
         if start is not None:
             start = max(0.0, start - pad_seconds)
         if end is not None:
