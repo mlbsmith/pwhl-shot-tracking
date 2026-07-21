@@ -1,5 +1,5 @@
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional, Tuple
+from typing import Any, Dict, Iterable, List, Optional, Set, Tuple
 
 from .gemini import (
     PROMPT_SCHEMA_VERSION,
@@ -35,11 +35,17 @@ def tag_shots(
     clips_dir: Path,
     force: bool = False,
     limit: Optional[int] = None,
+    rosters: Optional[Dict[str, Set[str]]] = None,
 ) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
     input_shots = list(shots)
     synchronized = [row for row in input_shots if row.get("clip_start_seconds") not in ("", None)]
     if limit is not None:
         synchronized = synchronized[:limit]
+    video_seconds_by_id = {}
+    for row in input_shots:
+        value = row.get("video_seconds")
+        if value not in ("", None):
+            video_seconds_by_id[row["shot_id"]] = float(value)
     output = []
     failures = []
     cached_count = 0
@@ -111,6 +117,12 @@ def tag_shots(
                 tag,
                 verification,
                 float(shot["clip_end_seconds"]) - float(shot["clip_start_seconds"]),
+                rosters=rosters,
+                other_shot_video_seconds=[
+                    seconds
+                    for shot_id, seconds in video_seconds_by_id.items()
+                    if shot_id != shot["shot_id"]
+                ],
             )
         )
     report = {
