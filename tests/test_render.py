@@ -4,7 +4,15 @@ import unittest
 from pathlib import Path
 
 from pwhl_shot_tracking.config import DEFAULT_CONFIG
-from pwhl_shot_tracking.render import Canvas, _draw_rink, _feed_to_canvas, render_shot_map
+from pwhl_shot_tracking.render import (
+    LABEL_HEIGHT,
+    Canvas,
+    _draw_rink,
+    _feed_to_canvas,
+    _place_label,
+    _team_colors,
+    render_shot_map,
+)
 
 
 class RenderTests(unittest.TestCase):
@@ -31,6 +39,46 @@ class RenderTests(unittest.TestCase):
         self.assertEqual(blue, color_at(300, 150))
         # The former extra neutral-zone faceoff circle is now clean ice.
         self.assertEqual(ice, color_at(203, 30))
+
+    def test_labels_flip_inside_the_rink_and_avoid_each_other(self):
+        rink = (90, 220, 1620, 689)
+        left, top, width, height = rink
+        text_width = 36
+        obstacles = []
+        # A marker against the right boards cannot fit a right-side label.
+        x, y = _place_label(left + width - 20, top + 300, text_width, rink, obstacles)
+        self.assertLessEqual(x + text_width, left + width - 6)
+        # A second marker at the same spot must not overlap the first label.
+        x2, y2 = _place_label(left + width - 20, top + 300, text_width, rink, obstacles)
+        first = (x, y, x + text_width, y + LABEL_HEIGHT)
+        second = (x2, y2, x2 + text_width, y2 + LABEL_HEIGHT)
+        overlap = not (
+            first[2] <= second[0]
+            or second[2] <= first[0]
+            or first[3] <= second[1]
+            or second[3] <= first[1]
+        )
+        self.assertFalse(overlap)
+
+    def test_team_colors_follow_home_and_away_designations(self):
+        config = {
+            "team_colors": {
+                "DEFAULT_HOME": "#6D2077",
+                "DEFAULT_AWAY": "#1B365D",
+            }
+        }
+        # The away team appears first in row order; it must still get the
+        # away default rather than inheriting home colors by encounter order.
+        rows = [
+            {"team_code": "MIN", "is_home": "False"},
+            {"team_code": "MTL", "is_home": "True"},
+        ]
+        colors = _team_colors(rows, config, ["MIN", "MTL"])
+        self.assertEqual((27, 54, 93), colors["MIN"])
+        self.assertEqual((109, 32, 119), colors["MTL"])
+        # Without home/away information the encounter-order fallback applies.
+        colors = _team_colors([{"team_code": "A"}, {"team_code": "B"}], config, ["A", "B"])
+        self.assertNotEqual(colors["A"], colors["B"])
 
     def test_writes_high_resolution_png_without_dependencies(self):
         rows = [
