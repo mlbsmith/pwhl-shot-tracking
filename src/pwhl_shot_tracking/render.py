@@ -599,15 +599,24 @@ def render_shot_map(
 
     # Arrows first, then markers, then labels: later strokes never cover a
     # label, and labels can dodge every marker on the ice.
+    arrow_count = 0
     for row, px, py in royal_rows:
         team = str(row.get("team_code") or row.get("team_id") or "TEAM")
         origin = _pass_origin(row)
-        if origin is not None:
-            ox, oy = _clamp_to_rink(
-                *_feed_to_canvas(origin[0], origin[1], rink),
-                rink,
-            )
-            canvas.arrow(ox, oy, px, py, colors[team], 5)
+        if origin is None:
+            continue
+        # A royal-road pass crosses the net-to-net centre line by definition;
+        # an arrow whose drawn geometry stays on one side would assert a
+        # crossing that is not there, so it is suppressed as unreliable.
+        shot_y = float(row["y"])
+        if (origin[1] - 150.0) * (shot_y - 150.0) > 0:
+            continue
+        ox, oy = _clamp_to_rink(
+            *_feed_to_canvas(origin[0], origin[1], rink),
+            rink,
+        )
+        canvas.arrow(ox, oy, px, py, colors[team], 5)
+        arrow_count += 1
 
     obstacles: List[Tuple[int, int, int, int]] = []
     for row, px, py in royal_rows:
@@ -639,7 +648,7 @@ def render_shot_map(
     if not publishable:
         canvas.rect(0, 0, 1800, 32, (174, 43, 55), True)
         canvas.text(530, 6, "DRAFT - MANUAL REVIEW OR THRESHOLDS INCOMPLETE", (255, 255, 255), 3)
-    canvas.text(95, 1010, "ALL SHOTS FAINT. ROYAL ROAD CHANCES HIGHLIGHTED. ARROWS ONLY WHEN GEOMETRY IS MEDIUM OR HIGH.", (65, 80, 91), 2)
+    canvas.text(95, 1010, "ALL SHOTS FAINT. ROYAL ROAD CHANCES HIGHLIGHTED. ARROWS ONLY FOR CONFIDENT GEOMETRY THAT CROSSES THE ROYAL ROAD.", (65, 80, 91), 2)
     canvas.save_png(output_path)
     return {
         "output_path": str(output_path),
@@ -647,6 +656,7 @@ def render_shot_map(
         "height": canvas.height,
         "shot_count": len(materialized),
         "royal_road_count": len(royal_rows),
+        "arrow_count": arrow_count,
         "team_counts": counts,
         "publishable": publishable,
     }

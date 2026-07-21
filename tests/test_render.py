@@ -80,6 +80,46 @@ class RenderTests(unittest.TestCase):
         colors = _team_colors([{"team_code": "A"}, {"team_code": "B"}], config, ["A", "B"])
         self.assertNotEqual(colors["A"], colors["B"])
 
+    def test_arrows_require_geometry_that_crosses_the_royal_road(self):
+        def royal_row(shot_id, y, lateral_pct):
+            return {
+                "shot_id": shot_id,
+                "team_code": "MTL",
+                "x": 100,
+                "y": y,
+                "shooter_number": "29",
+                "final_royal_road": True,
+                "tag_pass_geometry_confidence": "high",
+                "tag_pass_origin_longitudinal_pct": 80,
+                "tag_pass_origin_lateral_pct": lateral_pct,
+            }
+
+        config = dict(DEFAULT_CONFIG)
+        with tempfile.TemporaryDirectory() as directory:
+            report = render_shot_map(
+                [
+                    # Shot below centre (y=200), origin on the far side: drawn.
+                    royal_row("crossing", 200, 90),
+                    # Shot below centre, origin also below centre: suppressed.
+                    royal_row("same-side", 200, 10),
+                ],
+                config,
+                Path(directory) / "map.png",
+                publishable=True,
+            )
+        self.assertEqual(2, report["royal_road_count"])
+        self.assertEqual(1, report["arrow_count"])
+
+    def test_draft_render_carries_the_watermark_banner(self):
+        config = dict(DEFAULT_CONFIG)
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "map.png"
+            render_shot_map([], config, path, publishable=False)
+            draft_payload = path.read_bytes()
+            render_shot_map([], config, path, publishable=True)
+            publish_payload = path.read_bytes()
+        self.assertNotEqual(draft_payload, publish_payload)
+
     def test_writes_high_resolution_png_without_dependencies(self):
         rows = [
             {
