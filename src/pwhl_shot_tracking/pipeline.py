@@ -10,15 +10,37 @@ from .gemini import (
     blind_verification_prompt,
     contextual_prompt,
 )
-from .utils import read_json, write_json
+from .utils import optional_float, read_json, write_json
 from .validation import feed_shot_zone, flatten_tagged_row
 
 
-def _existing_result(path: Path) -> Optional[Tuple[Dict[str, Any], Dict[str, Any]]]:
+OFFSET_TOLERANCE_SECONDS = 0.25
+
+
+def sidecar_is_current(audit: Dict[str, Any], start_seconds: float, end_seconds: float) -> bool:
+    """A completed sidecar only counts as a cache hit while its clip offsets
+    still match the current sync; re-syncing (merged anchors, new runs) moves
+    offsets and must trigger a fresh analysis rather than reattach stale one."""
+    if audit.get("status") != "complete":
+        return False
+    offsets = audit.get("offsets") or {}
+    recorded_start = optional_float(offsets.get("start_seconds"))
+    recorded_end = optional_float(offsets.get("end_seconds"))
+    return (
+        recorded_start is not None
+        and recorded_end is not None
+        and abs(recorded_start - start_seconds) <= OFFSET_TOLERANCE_SECONDS
+        and abs(recorded_end - end_seconds) <= OFFSET_TOLERANCE_SECONDS
+    )
+
+
+def _existing_result(
+    path: Path, start_seconds: float, end_seconds: float
+) -> Optional[Tuple[Dict[str, Any], Dict[str, Any]]]:
     if not path.exists():
         return None
     audit = read_json(path)
-    if audit.get("status") != "complete":
+    if not sidecar_is_current(audit, start_seconds, end_seconds):
         return None
     tag = audit.get("passes", {}).get("contextual", {}).get("parsed_response")
     verification = audit.get("passes", {}).get("blind_verification", {}).get("parsed_response")
@@ -46,13 +68,13 @@ def tag_shots(
     api_call_count = 0
     for shot in synchronized:
         sidecar_path = clips_dir / ("%s.json" % shot["shot_id"])
-        existing = None if force else _existing_result(sidecar_path)
+        start = float(shot["clip_start_seconds"])
+        end = float(shot["clip_end_seconds"])
+        existing = None if force else _existing_result(sidecar_path, start, end)
         if existing is not None:
             tag, verification = existing
             cached_count += 1
         else:
-            start = float(shot["clip_start_seconds"])
-            end = float(shot["clip_end_seconds"])
             duration = end - start
             audit = {
                 "audit_record_version": "1.0",

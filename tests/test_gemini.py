@@ -59,5 +59,30 @@ class GeminiTests(unittest.TestCase):
         self.assertEqual(structured, result)
 
 
+    def test_socket_timeout_is_retried(self):
+        import socket
+
+        config = dict(DEFAULT_CONFIG)
+        config["video_url"] = "https://www.youtube.com/watch?v=test"
+        structured = {"clip_valid": True}
+        calls = {"count": 0}
+
+        def opener(request, timeout):
+            calls["count"] += 1
+            if calls["count"] == 1:
+                # On Python 3.9 socket.timeout is not TimeoutError, and
+                # response.read() raises it bare rather than inside URLError.
+                raise socket.timeout("timed out")
+            return FakeResponse(
+                {"candidates": [{"content": {"parts": [{"text": json.dumps(structured)}]}}]}
+            )
+
+        client = GeminiClient(config, api_keys=["secret"], opener=opener, sleeper=lambda _: None)
+        result, audit = client.generate("prompt", TAG_SCHEMA, 10.0, 24.0)
+        self.assertEqual(structured, result)
+        self.assertEqual(2, calls["count"])
+        self.assertEqual(2, len(audit["attempts"]))
+
+
 if __name__ == "__main__":
     unittest.main()

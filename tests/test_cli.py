@@ -11,10 +11,12 @@ from pwhl_shot_tracking.cli import (
     command_init,
     command_render,
     command_run_game,
+    command_sync,
+    command_tag,
 )
 from pwhl_shot_tracking.clock import Anchor
 from pwhl_shot_tracking.config import create_config, load_config, work_path
-from pwhl_shot_tracking.utils import read_json, write_csv, write_json
+from pwhl_shot_tracking.utils import read_csv, read_json, write_csv, write_json
 
 
 class CliTests(unittest.TestCase):
@@ -101,6 +103,83 @@ class CliTests(unittest.TestCase):
         self.assertEqual(0, result)
         self.assertEqual(120.0, report["range"]["end_seconds"])
         self.assertEqual((0.0, 120.0), discover.call_args.args[1:3])
+
+    def test_tag_limit_merges_into_existing_rows_and_needs_no_key_when_cached(self):
+        def sidecar(start, end):
+            return {
+                "status": "complete",
+                "offsets": {"start_seconds": start, "end_seconds": end},
+                "passes": {
+                    "contextual": {"parsed_response": {"royal_road": False, "shooter_number": "9"}},
+                    "blind_verification": {
+                        "parsed_response": {
+                            "clip_valid": True,
+                            "shooter_number": "9",
+                            "shot_zone": "low_slot",
+                            "shot_seen_at_seconds": 12,
+                        }
+                    },
+                },
+            }
+
+        with tempfile.TemporaryDirectory() as directory:
+            config_path = Path(directory) / "game.json"
+            create_config(
+                config_path,
+                "1",
+                "https://www.youtube.com/watch?v=test",
+                "shots_on_goal",
+            )
+            config = load_config(config_path)
+            write_json(work_path(config, "feed", "metadata.json"), {"feed_sha256": "hash"})
+            rows = []
+            for index, shot_id in enumerate(["a", "b"]):
+                start = 100.0 + index * 50
+                rows.append(
+                    {
+                        "shot_id": shot_id,
+                        "shooter_number": "9",
+                        "x": 100,
+                        "y": 150,
+                        "sync_status": "exact",
+                        "video_seconds": start + 12,
+                        "clip_start_seconds": start,
+                        "clip_end_seconds": start + 14,
+                    }
+                )
+                write_json(work_path(config, "clips", "%s.json" % shot_id), sidecar(start, start + 14))
+            rows.append({"shot_id": "c", "shooter_number": "9", "sync_status": "unmapped",
+                         "video_seconds": "", "clip_start_seconds": "", "clip_end_seconds": ""})
+            write_csv(work_path(config, "shots_synced.csv"), rows)
+
+            # Everything is cached, so no Gemini client (and no key) is needed.
+            with patch("pwhl_shot_tracking.cli.GeminiClient", side_effect=AssertionError("no client expected")):
+                command_tag(argparse.Namespace(config=str(config_path), limit=None, force=False, yes=False))
+                tagged_before = read_csv(work_path(config, "royal_road_1.csv"))
+                command_tag(argparse.Namespace(config=str(config_path), limit=1, force=False, yes=False))
+                tagged_after = read_csv(work_path(config, "royal_road_1.csv"))
+
+        self.assertEqual(["a", "b"], [row["shot_id"] for row in tagged_before])
+        # A limited smoke test must not clobber previously tagged rows.
+        self.assertEqual(["a", "b"], [row["shot_id"] for row in tagged_after])
+
+    def test_sync_refuses_an_empty_anchor_file(self):
+        with tempfile.TemporaryDirectory() as directory:
+            config_path = Path(directory) / "game.json"
+            create_config(
+                config_path,
+                "1",
+                "https://www.youtube.com/watch?v=test",
+                "shots_on_goal",
+            )
+            config = load_config(config_path)
+            write_csv(work_path(config, "shots.csv"), [{"shot_id": "a", "period": 1, "remaining_seconds": 100}])
+            (work_path(config, "sync", "anchors.csv")).parent.mkdir(parents=True, exist_ok=True)
+            (work_path(config, "sync", "anchors.csv")).write_text(
+                "period,game_clock,video_seconds,clock_running\n", encoding="utf-8"
+            )
+            with self.assertRaises(ValueError):
+                command_sync(argparse.Namespace(config=str(config_path), shots=None, anchors=None))
 
     def test_init_resolves_game_id_when_override_is_omitted(self):
         resolution = {
