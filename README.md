@@ -218,6 +218,9 @@ The tests are offline and do not use a Gemini key.
 
 ## Current limitations
 
+See [FINDINGS.md](FINDINGS.md) for the reviewed findings from the first full
+game run (game 347) and the runbook to a publishable chart.
+
 - Gemini scorebug discovery still needs human inspection; exact sync determines
   whether every downstream result is meaningful.
 - The public feed is unofficial and may change. The raw response and hash make
