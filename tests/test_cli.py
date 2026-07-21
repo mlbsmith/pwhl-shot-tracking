@@ -14,7 +14,7 @@ from pwhl_shot_tracking.cli import (
 )
 from pwhl_shot_tracking.clock import Anchor
 from pwhl_shot_tracking.config import create_config, load_config, work_path
-from pwhl_shot_tracking.utils import read_json, write_csv, write_json
+from pwhl_shot_tracking.utils import read_csv, read_json, write_csv, write_json
 
 
 class CliTests(unittest.TestCase):
@@ -85,6 +85,7 @@ class CliTests(unittest.TestCase):
                 end=None,
                 chunk_seconds=300,
                 output=str(output_path),
+                replace=False,
                 yes=True,
             )
             discovered = [Anchor(1, 1190, 10.0, source="gemini")]
@@ -101,6 +102,55 @@ class CliTests(unittest.TestCase):
         self.assertEqual(0, result)
         self.assertEqual(120.0, report["range"]["end_seconds"])
         self.assertEqual((0.0, 120.0), discover.call_args.args[1:3])
+
+    def test_anchor_discovery_merges_targeted_rescans_into_existing_anchors(self):
+        with tempfile.TemporaryDirectory() as directory:
+            config_path = Path(directory) / "game.json"
+            create_config(
+                config_path,
+                "340",
+                "https://www.youtube.com/watch?v=AbC_123-xY",
+                "shots_on_goal",
+                game_resolution={"video": {"duration_seconds": 600}},
+            )
+            config = load_config(config_path)
+            anchors_path = work_path(config, "sync", "anchors.csv")
+            write_csv(
+                anchors_path,
+                [
+                    {
+                        "period": 1,
+                        "game_clock": "19:50",
+                        "video_seconds": 100.0,
+                        "clock_running": True,
+                        "confidence": "high",
+                        "run_id": "p1-run-001",
+                        "source": "gemini",
+                    }
+                ],
+            )
+            arguments = argparse.Namespace(
+                config=str(config_path),
+                start=400,
+                end=500,
+                chunk_seconds=300,
+                output=None,
+                replace=False,
+                yes=True,
+            )
+            discovered = [Anchor(1, 600, 450.0, source="gemini")]
+            with patch("pwhl_shot_tracking.cli.GeminiClient", return_value=object()), patch(
+                "pwhl_shot_tracking.cli.discover_anchors",
+                return_value=(discovered, {}),
+            ):
+                result = command_discover_anchors(arguments)
+
+            merged = read_csv(anchors_path)
+
+        self.assertEqual(0, result)
+        self.assertEqual(["100.0", "450.0"], [row["video_seconds"] for row in merged])
+        # Runs are reassigned across the merged set, not carried over per scan.
+        self.assertEqual(2, len({row["run_id"] for row in merged}))
 
     def test_init_resolves_game_id_when_override_is_omitted(self):
         resolution = {

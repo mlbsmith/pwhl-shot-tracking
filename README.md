@@ -118,6 +118,13 @@ python3 -m pwhl_shot_tracking sync --config game.json
 Inspect `work/<game>/sync/anchors.csv` and spot-check generated `review_url`
 values in `shots_synced.csv` before paying to tag the game.
 
+When `sync` reports unmapped shots, it writes `work/<game>/sync/gaps.json`
+describing the anchor-coverage gap behind each one and prints ready-to-run
+`discover-anchors --start --end` commands scoped to just those gaps. Targeted
+re-scans merge into the existing `anchors.csv` by default (`--replace`
+overwrites), so the recovery loop is: run the suggested scans, re-run `sync`,
+then `tag` only pays for the newly mapped shots.
+
 ### Calibration and tagging
 
 First replace the IDs in `examples/calibration.example.csv` with known positive
@@ -187,6 +194,7 @@ feed/metadata.json            source URL, hash, and coordinate coverage
 shots.csv                     normalized denominator
 sync/anchors.csv              raw/discovered scorebug anchors
 sync/anchors_normalized.csv   active-run assignments
+sync/gaps.json                anchor-coverage gaps behind unmapped shots
 shots_synced.csv              VOD offsets and review links
 clips/<shot_id>.json          complete Gemini audit sidecar
 royal_road_<game>.csv         feed + model + automatic flags
