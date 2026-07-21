@@ -9,23 +9,43 @@ from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 
 
 def parse_clock(value: Any) -> int:
-    """Parse MM:SS, HH:MM:SS, or numeric seconds."""
+    """Parse MM:SS, HH:MM:SS, or numeric seconds.
+
+    Broadcast scorebugs switch to tenths under a minute (':52.9', '17.9',
+    '0:45.5'), so a leading ':' is stripped and the final seconds component
+    may carry a decimal fraction, which is truncated toward zero.
+    """
     if isinstance(value, (int, float)):
+        if value < 0:
+            raise ValueError("invalid clock value: %s" % value)
         return int(value)
     text = str(value or "").strip()
     if not text:
         raise ValueError("clock value is empty")
+    if text.startswith(":"):
+        text = text[1:]
     if text.isdigit():
         return int(text)
     parts = text.split(":")
-    if not all(part.isdigit() for part in parts):
+    seconds_part = parts[-1]
+    whole, dot, fraction = seconds_part.partition(".")
+    seconds_is_valid = whole.isdigit() and (not dot or fraction.isdigit())
+    if not seconds_is_valid or not all(part.isdigit() for part in parts[:-1]):
         raise ValueError("invalid clock value: %s" % text)
+    seconds = int(float(seconds_part))
+    # A displayed clock never shows 60+ in a subordinate position ('1:70.5'
+    # is a misread, not a value to normalize).
+    if len(parts) > 1 and seconds >= 60:
+        raise ValueError("invalid clock value: %s" % text)
+    if len(parts) == 1:
+        return seconds
     if len(parts) == 2:
-        minutes, seconds = (int(part) for part in parts)
-        return minutes * 60 + seconds
+        return int(parts[0]) * 60 + seconds
     if len(parts) == 3:
-        hours, minutes, seconds = (int(part) for part in parts)
-        return hours * 3600 + minutes * 60 + seconds
+        minutes = int(parts[1])
+        if minutes >= 60:
+            raise ValueError("invalid clock value: %s" % text)
+        return int(parts[0]) * 3600 + minutes * 60 + seconds
     raise ValueError("invalid clock value: %s" % text)
 
 
