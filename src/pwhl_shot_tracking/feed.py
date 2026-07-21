@@ -65,6 +65,8 @@ def team_jersey_numbers(payload: Dict[str, Any]) -> Dict[str, Set[str]]:
             "loser",
             "plus",
             "minus",
+            "player_penalized_info",
+            "player_served_info",
         ):
             value = event.get(key)
             if isinstance(value, dict):

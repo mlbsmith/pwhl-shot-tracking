@@ -54,6 +54,13 @@ class ValidationTests(unittest.TestCase):
         errors, advisories = automatic_flags(shot, tag, verification, 14.0, rosters)
         self.assertEqual([], errors)
         self.assertIn("unrecognized_shooter_number", advisories)
+        # A number dressed by both teams is ambiguous, not benign attribution.
+        shared = {"2": {"26", "21"}, "3": {"88", "21"}}
+        verification["shooter_number"] = "21"
+        errors, advisories = automatic_flags(shot, tag, verification, 14.0, shared)
+        self.assertEqual([], errors)
+        self.assertIn("ambiguous_shooter_number", advisories)
+        self.assertNotIn("shooter_attribution_differs", advisories)
 
     def test_adjacent_zone_families_are_advisory_not_error(self):
         shot = {

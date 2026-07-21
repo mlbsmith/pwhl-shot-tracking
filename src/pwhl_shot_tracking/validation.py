@@ -86,7 +86,12 @@ def automatic_flags(
             for team, numbers in rosters.items():
                 if team != team_id:
                     opposing |= numbers
-            if blind_number in own:
+            if blind_number in own and blind_number in opposing:
+                # Both teams dress this number, so the sighting cannot say
+                # which team was shooting; it must not masquerade as benign
+                # teammate attribution.
+                advisories.append("ambiguous_shooter_number")
+            elif blind_number in own:
                 advisories.append("shooter_attribution_differs")
             elif blind_number in opposing:
                 errors.append("opposing_shooter_on_screen")

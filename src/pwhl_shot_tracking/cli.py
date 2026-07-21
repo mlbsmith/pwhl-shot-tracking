@@ -274,7 +274,9 @@ def _feed_rosters(config: Dict[str, Any]):
     if not raw_path.exists():
         return None
     try:
-        return team_jersey_numbers(read_json(raw_path))
+        # An empty roster would downgrade every mismatch to "unrecognized";
+        # fall back to the strict legacy flag instead.
+        return team_jersey_numbers(read_json(raw_path)) or None
     except (ValueError, OSError):
         return None
 
