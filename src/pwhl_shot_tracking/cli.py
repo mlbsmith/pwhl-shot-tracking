@@ -18,7 +18,7 @@ from .clock import (
 from .config import DEFAULT_CONFIG, SHOT_UNIVERSES, create_config, load_config, work_path
 from .feed import fetch_game_feed, normalize_shots, team_jersey_numbers
 from .gemini import GeminiClient, discover_anchors
-from .pipeline import tag_shots
+from .pipeline import sidecar_is_current, tag_shots
 from .render import render_shot_map
 from .resolver import GameResolutionError, extract_youtube_video_id, resolve_game_id
 from .utils import (
@@ -265,6 +265,11 @@ def command_sync(args: argparse.Namespace) -> int:
     anchors_path = Path(args.anchors) if args.anchors else work_path(config, "sync", "anchors.csv")
     shots = read_csv(shots_path)
     anchors = load_anchors(anchors_path, float(config["clock"]["max_stoppage_gap_seconds"]))
+    if not anchors:
+        raise ValueError(
+            "%s contains no usable anchors; re-run discover-anchors or import manual anchors"
+            % anchors_path
+        )
     synchronized, report = synchronize_shots(shots, anchors, config)
     report.update({"created_at": _utc_now(), "anchor_count": len(anchors), "anchors_source": str(anchors_path)})
     write_csv(work_path(config, "shots_synced.csv"), synchronized)
@@ -317,15 +322,22 @@ def _feed_rosters(config: Dict[str, Any]):
 
 
 def _pending_api_calls(rows: List[Dict[str, Any]], config: Dict[str, Any], force: bool) -> int:
+    feed_sha256 = _feed_hash(config)
     pending = 0
     for row in rows:
         if row.get("clip_start_seconds") in ("", None):
             continue
         sidecar = work_path(config, "clips", "%s.json" % row["shot_id"])
-        complete = False
+        cached = False
         if sidecar.exists() and not force:
-            complete = read_json(sidecar).get("status") == "complete"
-        if not complete:
+            cached = sidecar_is_current(
+                read_json(sidecar),
+                float(row["clip_start_seconds"]),
+                float(row["clip_end_seconds"]),
+                feed_sha256,
+                config["gemini"],
+            )
+        if not cached:
             pending += 2
     return pending
 
@@ -340,10 +352,14 @@ def _guard_gemini_calls(call_count: int, config: Dict[str, Any], confirmed: bool
 
 def command_tag(args: argparse.Namespace) -> int:
     config = _config(args)
-    rows = _selected_rows(read_csv(work_path(config, "shots_synced.csv")), args.limit)
-    calls = _pending_api_calls(rows, config, args.force)
+    if args.limit is not None and args.limit <= 0:
+        raise ValueError("--limit must be a positive integer")
+    rows = read_csv(work_path(config, "shots_synced.csv"))
+    mapped = [row for row in rows if row.get("clip_start_seconds") not in ("", None)]
+    budget_rows = _selected_rows(mapped, args.limit)
+    calls = _pending_api_calls(budget_rows, config, args.force)
     _guard_gemini_calls(calls, config, args.yes)
-    client = GeminiClient(config)
+    client = GeminiClient(config) if calls else None
     tagged, report = tag_shots(
         rows,
         config,
@@ -351,11 +367,26 @@ def command_tag(args: argparse.Namespace) -> int:
         _feed_hash(config),
         work_path(config, "clips"),
         force=args.force,
-        limit=None,
+        limit=args.limit,
         rosters=_feed_rosters(config),
     )
     report["created_at"] = _utc_now()
-    write_csv(_tagged_path(config), tagged)
+    tagged_path = _tagged_path(config)
+    merged = {}
+    if tagged_path.exists():
+        for row in read_csv(tagged_path):
+            merged[str(row["shot_id"])] = row
+    for row in tagged:
+        merged[str(row["shot_id"])] = row
+    # A shot that lost its mapping in a re-sync must not survive via the
+    # previous CSV: its old tag describes a clip that no longer exists.
+    mapped_ids = {str(row["shot_id"]) for row in mapped}
+    ordered = [
+        merged[key]
+        for key in (str(row["shot_id"]) for row in rows)
+        if key in merged and key in mapped_ids
+    ]
+    write_csv(tagged_path, ordered)
     write_json(work_path(config, "tag_report.json"), report)
     print("Tagged %d shots; %d cached; %d failed" % (len(tagged), report["cached_count"], report["failure_count"]))
     return 1 if report["failure_count"] else 0

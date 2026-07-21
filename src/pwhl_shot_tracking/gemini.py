@@ -1,5 +1,6 @@
 import json
 import random
+import socket
 import time
 from datetime import datetime, timezone
 from typing import Any, Callable, Dict, List, Optional, Tuple
@@ -329,7 +330,9 @@ class GeminiClient:
                         "Gemini HTTP %s: %s" % (error.code, error_body[:500]),
                         {"request": body, "endpoint": endpoint, "attempts": attempts},
                     )
-            except (URLError, TimeoutError, json.JSONDecodeError, KeyError, ValueError, GeminiError) as error:
+            # socket.timeout is not a TimeoutError alias until Python 3.10, and
+            # response.read() raises it directly rather than wrapped in URLError.
+            except (URLError, TimeoutError, socket.timeout, json.JSONDecodeError, KeyError, ValueError, GeminiError) as error:
                 attempts.append(
                     {
                         "attempt": attempt_number,

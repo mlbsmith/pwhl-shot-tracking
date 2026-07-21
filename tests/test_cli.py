@@ -11,6 +11,8 @@ from pwhl_shot_tracking.cli import (
     command_init,
     command_render,
     command_run_game,
+    command_sync,
+    command_tag,
 )
 from pwhl_shot_tracking.clock import Anchor
 from pwhl_shot_tracking.config import create_config, load_config, work_path
@@ -151,6 +153,97 @@ class CliTests(unittest.TestCase):
         self.assertEqual(["100.0", "450.0"], [row["video_seconds"] for row in merged])
         # Runs are reassigned across the merged set, not carried over per scan.
         self.assertEqual(2, len({row["run_id"] for row in merged}))
+
+    def test_tag_limit_merges_into_existing_rows_and_needs_no_key_when_cached(self):
+        with tempfile.TemporaryDirectory() as directory:
+            config_path = Path(directory) / "game.json"
+            create_config(
+                config_path,
+                "1",
+                "https://www.youtube.com/watch?v=test",
+                "shots_on_goal",
+            )
+            config = load_config(config_path)
+
+            def sidecar(start, end):
+                return {
+                    "status": "complete",
+                    "offsets": {"start_seconds": start, "end_seconds": end},
+                    "feed_snapshot_sha256": "hash",
+                    "model_id": config["gemini"]["model"],
+                    "fps": config["gemini"]["fps"],
+                    "media_resolution": config["gemini"]["media_resolution"],
+                    "passes": {
+                        "contextual": {"parsed_response": {"royal_road": False, "shooter_number": "9"}},
+                        "blind_verification": {
+                            "parsed_response": {
+                                "clip_valid": True,
+                                "shooter_number": "9",
+                                "shot_zone": "low_slot",
+                                "shot_seen_at_seconds": 12,
+                            }
+                        },
+                    },
+                }
+
+            write_json(work_path(config, "feed", "metadata.json"), {"feed_sha256": "hash"})
+            rows = []
+            for index, shot_id in enumerate(["a", "b"]):
+                start = 100.0 + index * 50
+                rows.append(
+                    {
+                        "shot_id": shot_id,
+                        "shooter_number": "9",
+                        "x": 100,
+                        "y": 150,
+                        "sync_status": "exact",
+                        "video_seconds": start + 12,
+                        "clip_start_seconds": start,
+                        "clip_end_seconds": start + 14,
+                    }
+                )
+                write_json(work_path(config, "clips", "%s.json" % shot_id), sidecar(start, start + 14))
+            rows.append({"shot_id": "c", "shooter_number": "9", "sync_status": "unmapped",
+                         "video_seconds": "", "clip_start_seconds": "", "clip_end_seconds": ""})
+            write_csv(work_path(config, "shots_synced.csv"), rows)
+
+            # Everything is cached, so no Gemini client (and no key) is needed.
+            with patch("pwhl_shot_tracking.cli.GeminiClient", side_effect=AssertionError("no client expected")):
+                command_tag(argparse.Namespace(config=str(config_path), limit=None, force=False, yes=False))
+                tagged_before = read_csv(work_path(config, "royal_road_1.csv"))
+                command_tag(argparse.Namespace(config=str(config_path), limit=1, force=False, yes=False))
+                tagged_after = read_csv(work_path(config, "royal_road_1.csv"))
+
+                # A re-sync that unmaps shot b must also evict its old tag
+                # from the merged CSV, not let it linger with stale offsets.
+                rows[1] = dict(rows[1], sync_status="unmapped", video_seconds="",
+                               clip_start_seconds="", clip_end_seconds="")
+                write_csv(work_path(config, "shots_synced.csv"), rows)
+                command_tag(argparse.Namespace(config=str(config_path), limit=None, force=False, yes=False))
+                tagged_after_unmap = read_csv(work_path(config, "royal_road_1.csv"))
+
+        self.assertEqual(["a", "b"], [row["shot_id"] for row in tagged_before])
+        # A limited smoke test must not clobber previously tagged rows.
+        self.assertEqual(["a", "b"], [row["shot_id"] for row in tagged_after])
+        self.assertEqual(["a"], [row["shot_id"] for row in tagged_after_unmap])
+
+    def test_sync_refuses_an_empty_anchor_file(self):
+        with tempfile.TemporaryDirectory() as directory:
+            config_path = Path(directory) / "game.json"
+            create_config(
+                config_path,
+                "1",
+                "https://www.youtube.com/watch?v=test",
+                "shots_on_goal",
+            )
+            config = load_config(config_path)
+            write_csv(work_path(config, "shots.csv"), [{"shot_id": "a", "period": 1, "remaining_seconds": 100}])
+            (work_path(config, "sync", "anchors.csv")).parent.mkdir(parents=True, exist_ok=True)
+            (work_path(config, "sync", "anchors.csv")).write_text(
+                "period,game_clock,video_seconds,clock_running\n", encoding="utf-8"
+            )
+            with self.assertRaises(ValueError):
+                command_sync(argparse.Namespace(config=str(config_path), shots=None, anchors=None))
 
     def test_init_resolves_game_id_when_override_is_omitted(self):
         resolution = {
