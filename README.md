@@ -48,7 +48,10 @@ written to `game.json`, CSV output, or audit files.
 - Per-clip audit sidecars containing model, API surface, prompt/schema versions,
   source, feed hash, offsets, FPS, media resolution, requests, raw responses,
   retries, and manual disposition.
-- Automatic shooter, zone, timing, and clip-validity flags.
+- Automatic shooter, zone, timing, and clip-validity checks, split into
+  hard error flags and benign-explanation advisories (teammate attribution,
+  adjacent broadcast zones, multi-shot clip windows) using rosters derived
+  from the play-by-play feed.
 - Calibration against both known positives and hard negatives.
 - Full-candidate manual review, precision/recall thresholds, and a publish guard.
 - Dependency-free 1800×1050 PNG rendering. Arrows appear only when Gemini reports

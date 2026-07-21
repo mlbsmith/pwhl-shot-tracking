@@ -18,10 +18,114 @@ class ValidationTests(unittest.TestCase):
             "shot_zone": "left_point",
             "shot_seen_at_seconds": 12,
         }
-        flags = automatic_flags(shot, tag, verification, 14.0)
-        self.assertIn("shooter_number_mismatch", flags)
-        self.assertIn("shot_zone_mismatch", flags)
+        errors, advisories = automatic_flags(shot, tag, verification, 14.0)
+        # Without roster context the legacy strict behavior applies.
+        self.assertIn("shooter_number_mismatch", errors)
+        self.assertIn("shot_zone_mismatch", errors)
+        self.assertEqual([], advisories)
         self.assertEqual("low_slot", feed_shot_zone(shot))
+
+    def test_roster_context_separates_attribution_noise_from_sync_errors(self):
+        rosters = {"2": {"13", "26"}, "3": {"88", "29"}}
+        shot = {
+            "sync_status": "interpolated",
+            "x": 100,
+            "y": 150,
+            "shooter_number": "26",
+            "team_id": "2",
+        }
+        tag = {"shooter_number": "26"}
+        verification = {
+            "clip_valid": True,
+            "shooter_number": "13",
+            "shot_zone": "low_slot",
+            "shot_seen_at_seconds": 12,
+        }
+        # A teammate's number is attribution noise, not a sync error.
+        errors, advisories = automatic_flags(shot, tag, verification, 14.0, rosters)
+        self.assertEqual([], errors)
+        self.assertIn("shooter_attribution_differs", advisories)
+        # An opponent's number means the clip probably shows the wrong shot.
+        verification["shooter_number"] = "88"
+        errors, advisories = automatic_flags(shot, tag, verification, 14.0, rosters)
+        self.assertIn("opposing_shooter_on_screen", errors)
+        # A number on neither roster is most likely a misread jersey.
+        verification["shooter_number"] = "99"
+        errors, advisories = automatic_flags(shot, tag, verification, 14.0, rosters)
+        self.assertEqual([], errors)
+        self.assertIn("unrecognized_shooter_number", advisories)
+        # A number dressed by both teams is ambiguous, not benign attribution.
+        shared = {"2": {"26", "21"}, "3": {"88", "21"}}
+        verification["shooter_number"] = "21"
+        errors, advisories = automatic_flags(shot, tag, verification, 14.0, shared)
+        self.assertEqual([], errors)
+        self.assertIn("ambiguous_shooter_number", advisories)
+        self.assertNotIn("shooter_attribution_differs", advisories)
+
+    def test_adjacent_zone_families_are_advisory_not_error(self):
+        shot = {
+            "sync_status": "exact",
+            "x": 100,
+            "y": 150,
+            "shooter_number": "26",
+        }
+        tag = {"shooter_number": "26"}
+        verification = {
+            "clip_valid": True,
+            "shooter_number": "26",
+            "shot_zone": "right_circle",
+            "shot_seen_at_seconds": 12,
+        }
+        # Feed low_slot vs blind circle is broadcast-angle boundary noise.
+        errors, advisories = automatic_flags(shot, tag, verification, 14.0)
+        self.assertEqual([], errors)
+        self.assertIn("shot_zone_differs_adjacent", advisories)
+        # Two families apart is still an error.
+        verification["shot_zone"] = "left_point"
+        errors, _ = automatic_flags(shot, tag, verification, 14.0)
+        self.assertIn("shot_zone_mismatch", errors)
+
+    def test_royal_road_crossing_above_circle_tops_is_advisory(self):
+        shot = {"sync_status": "exact", "x": 100, "y": 150, "shooter_number": "26"}
+        tag = {
+            "shooter_number": "26",
+            "royal_road": True,
+            "pass_geometry_confidence": "high",
+            "pass_crossing_longitudinal_pct": 70,
+        }
+        verification = {
+            "clip_valid": True,
+            "shooter_number": "26",
+            "shot_zone": "low_slot",
+            "shot_seen_at_seconds": 12,
+        }
+        errors, advisories = automatic_flags(shot, tag, verification, 14.0)
+        self.assertEqual([], errors)
+        self.assertIn("royal_road_geometry_above_circles", advisories)
+
+    def test_second_candidate_inside_clip_window_is_advisory(self):
+        shot = {
+            "sync_status": "exact",
+            "x": 100,
+            "y": 150,
+            "shooter_number": "26",
+            "clip_start_seconds": 100.0,
+            "clip_end_seconds": 114.0,
+        }
+        tag = {"shooter_number": "26"}
+        verification = {
+            "clip_valid": True,
+            "shooter_number": "26",
+            "shot_zone": "low_slot",
+            "shot_seen_at_seconds": 12,
+        }
+        errors, advisories = automatic_flags(
+            shot, tag, verification, 14.0, None, [112.0]
+        )
+        self.assertEqual([], errors)
+        self.assertIn("multi_shot_clip_window", advisories)
+        _, advisories = automatic_flags(shot, tag, verification, 14.0, None, [130.0])
+        self.assertNotIn("multi_shot_clip_window", advisories)
 
     def test_finalize_requires_every_manual_label_and_thresholds(self):
         tagged = [

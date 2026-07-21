@@ -16,7 +16,7 @@ from .clock import (
     synchronize_shots,
 )
 from .config import DEFAULT_CONFIG, SHOT_UNIVERSES, create_config, load_config, work_path
-from .feed import fetch_game_feed, normalize_shots
+from .feed import fetch_game_feed, normalize_shots, team_jersey_numbers
 from .gemini import GeminiClient, discover_anchors
 from .pipeline import tag_shots
 from .render import render_shot_map
@@ -304,6 +304,18 @@ def _feed_hash(config: Dict[str, Any]) -> str:
     return str(read_json(metadata_path).get("feed_sha256") or "")
 
 
+def _feed_rosters(config: Dict[str, Any]):
+    raw_path = work_path(config, "feed", "raw.json")
+    if not raw_path.exists():
+        return None
+    try:
+        # An empty roster would downgrade every mismatch to "unrecognized";
+        # fall back to the strict legacy flag instead.
+        return team_jersey_numbers(read_json(raw_path)) or None
+    except (ValueError, OSError):
+        return None
+
+
 def _pending_api_calls(rows: List[Dict[str, Any]], config: Dict[str, Any], force: bool) -> int:
     pending = 0
     for row in rows:
@@ -340,6 +352,7 @@ def command_tag(args: argparse.Namespace) -> int:
         work_path(config, "clips"),
         force=args.force,
         limit=None,
+        rosters=_feed_rosters(config),
     )
     report["created_at"] = _utc_now()
     write_csv(_tagged_path(config), tagged)
@@ -375,6 +388,7 @@ def command_calibrate(args: argparse.Namespace) -> int:
         _feed_hash(config),
         work_path(config, "clips"),
         force=args.force,
+        rosters=_feed_rosters(config),
     )
     tp = fp = fn = tn = 0
     for row in tagged:
