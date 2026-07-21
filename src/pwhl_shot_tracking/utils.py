@@ -16,6 +16,8 @@ def parse_clock(value: Any) -> int:
     may carry a decimal fraction, which is truncated toward zero.
     """
     if isinstance(value, (int, float)):
+        if value < 0:
+            raise ValueError("invalid clock value: %s" % value)
         return int(value)
     text = str(value or "").strip()
     if not text:
@@ -26,20 +28,24 @@ def parse_clock(value: Any) -> int:
         return int(text)
     parts = text.split(":")
     seconds_part = parts[-1]
-    seconds_is_valid = seconds_part.isdigit() or (
-        seconds_part.count(".") == 1
-        and seconds_part.replace(".", "").isdigit()
-        and not seconds_part.startswith(".")
-    )
+    whole, dot, fraction = seconds_part.partition(".")
+    seconds_is_valid = whole.isdigit() and (not dot or fraction.isdigit())
     if not seconds_is_valid or not all(part.isdigit() for part in parts[:-1]):
         raise ValueError("invalid clock value: %s" % text)
     seconds = int(float(seconds_part))
+    # A displayed clock never shows 60+ in a subordinate position ('1:70.5'
+    # is a misread, not a value to normalize).
+    if len(parts) > 1 and seconds >= 60:
+        raise ValueError("invalid clock value: %s" % text)
     if len(parts) == 1:
         return seconds
     if len(parts) == 2:
         return int(parts[0]) * 60 + seconds
     if len(parts) == 3:
-        return int(parts[0]) * 3600 + int(parts[1]) * 60 + seconds
+        minutes = int(parts[1])
+        if minutes >= 60:
+            raise ValueError("invalid clock value: %s" % text)
+        return int(parts[0]) * 3600 + minutes * 60 + seconds
     raise ValueError("invalid clock value: %s" % text)
 
 

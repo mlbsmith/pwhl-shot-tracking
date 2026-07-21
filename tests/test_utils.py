@@ -21,9 +21,16 @@ class ParseClockTests(unittest.TestCase):
         self.assertEqual(63, parse_clock("1:03.4"))
 
     def test_invalid_values_still_raise(self):
-        for value in ("", None, "ab:cd", "ab.cd", "1:2:3:4", ".9", "1:.9"):
+        for value in ("", None, "ab:cd", "ab.cd", "1:2:3:4", ".9", "1:.9", "1."):
             with self.assertRaises(ValueError):
                 parse_clock(value)
+
+    def test_out_of_range_components_and_negatives_are_rejected(self):
+        # A subordinate component of 60+ is a misread, not a normalizable value.
+        for value in ("1:70.5", "1:2:70.5", "1:75", "1:70:05", -1, -1.9):
+            with self.assertRaises(ValueError):
+                parse_clock(value)
+        self.assertEqual(119, parse_clock("1:59"))
 
 
 if __name__ == "__main__":
