@@ -105,23 +105,6 @@ class CliTests(unittest.TestCase):
         self.assertEqual((0.0, 120.0), discover.call_args.args[1:3])
 
     def test_tag_limit_merges_into_existing_rows_and_needs_no_key_when_cached(self):
-        def sidecar(start, end):
-            return {
-                "status": "complete",
-                "offsets": {"start_seconds": start, "end_seconds": end},
-                "passes": {
-                    "contextual": {"parsed_response": {"royal_road": False, "shooter_number": "9"}},
-                    "blind_verification": {
-                        "parsed_response": {
-                            "clip_valid": True,
-                            "shooter_number": "9",
-                            "shot_zone": "low_slot",
-                            "shot_seen_at_seconds": 12,
-                        }
-                    },
-                },
-            }
-
         with tempfile.TemporaryDirectory() as directory:
             config_path = Path(directory) / "game.json"
             create_config(
@@ -131,6 +114,28 @@ class CliTests(unittest.TestCase):
                 "shots_on_goal",
             )
             config = load_config(config_path)
+
+            def sidecar(start, end):
+                return {
+                    "status": "complete",
+                    "offsets": {"start_seconds": start, "end_seconds": end},
+                    "feed_snapshot_sha256": "hash",
+                    "model_id": config["gemini"]["model"],
+                    "fps": config["gemini"]["fps"],
+                    "media_resolution": config["gemini"]["media_resolution"],
+                    "passes": {
+                        "contextual": {"parsed_response": {"royal_road": False, "shooter_number": "9"}},
+                        "blind_verification": {
+                            "parsed_response": {
+                                "clip_valid": True,
+                                "shooter_number": "9",
+                                "shot_zone": "low_slot",
+                                "shot_seen_at_seconds": 12,
+                            }
+                        },
+                    },
+                }
+
             write_json(work_path(config, "feed", "metadata.json"), {"feed_sha256": "hash"})
             rows = []
             for index, shot_id in enumerate(["a", "b"]):
@@ -159,9 +164,18 @@ class CliTests(unittest.TestCase):
                 command_tag(argparse.Namespace(config=str(config_path), limit=1, force=False, yes=False))
                 tagged_after = read_csv(work_path(config, "royal_road_1.csv"))
 
+                # A re-sync that unmaps shot b must also evict its old tag
+                # from the merged CSV, not let it linger with stale offsets.
+                rows[1] = dict(rows[1], sync_status="unmapped", video_seconds="",
+                               clip_start_seconds="", clip_end_seconds="")
+                write_csv(work_path(config, "shots_synced.csv"), rows)
+                command_tag(argparse.Namespace(config=str(config_path), limit=None, force=False, yes=False))
+                tagged_after_unmap = read_csv(work_path(config, "royal_road_1.csv"))
+
         self.assertEqual(["a", "b"], [row["shot_id"] for row in tagged_before])
         # A limited smoke test must not clobber previously tagged rows.
         self.assertEqual(["a", "b"], [row["shot_id"] for row in tagged_after])
+        self.assertEqual(["a"], [row["shot_id"] for row in tagged_after_unmap])
 
     def test_sync_refuses_an_empty_anchor_file(self):
         with tempfile.TemporaryDirectory() as directory:

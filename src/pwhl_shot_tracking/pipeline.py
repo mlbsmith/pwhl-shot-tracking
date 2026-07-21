@@ -17,36 +17,63 @@ from .validation import feed_shot_zone, flatten_tagged_row
 OFFSET_TOLERANCE_SECONDS = 0.25
 
 
-def sidecar_is_current(audit: Dict[str, Any], start_seconds: float, end_seconds: float) -> bool:
+def sidecar_is_current(
+    audit: Dict[str, Any],
+    start_seconds: float,
+    end_seconds: float,
+    feed_sha256: Optional[str] = None,
+    gemini_settings: Optional[Dict[str, Any]] = None,
+) -> bool:
     """A completed sidecar only counts as a cache hit while its clip offsets
-    still match the current sync; re-syncing (merged anchors, new runs) moves
-    offsets and must trigger a fresh analysis rather than reattach stale one."""
+    still match the current sync and it was produced from the same feed
+    snapshot and Gemini configuration; anything else must trigger a fresh
+    analysis rather than reattach a stale one. Both parsed responses must be
+    present so the call-count guard and the cache agree on what is reusable."""
     if audit.get("status") != "complete":
         return False
     offsets = audit.get("offsets") or {}
     recorded_start = optional_float(offsets.get("start_seconds"))
     recorded_end = optional_float(offsets.get("end_seconds"))
-    return (
-        recorded_start is not None
-        and recorded_end is not None
-        and abs(recorded_start - start_seconds) <= OFFSET_TOLERANCE_SECONDS
-        and abs(recorded_end - end_seconds) <= OFFSET_TOLERANCE_SECONDS
-    )
+    if (
+        recorded_start is None
+        or recorded_end is None
+        or abs(recorded_start - start_seconds) > OFFSET_TOLERANCE_SECONDS
+        or abs(recorded_end - end_seconds) > OFFSET_TOLERANCE_SECONDS
+    ):
+        return False
+    passes = audit.get("passes") or {}
+    if not isinstance(passes.get("contextual", {}).get("parsed_response"), dict):
+        return False
+    if not isinstance(passes.get("blind_verification", {}).get("parsed_response"), dict):
+        return False
+    if feed_sha256 and str(audit.get("feed_snapshot_sha256") or "") != str(feed_sha256):
+        return False
+    if gemini_settings is not None:
+        if str(audit.get("model_id") or "") != str(gemini_settings["model"]):
+            return False
+        if optional_float(audit.get("fps")) != float(gemini_settings["fps"]):
+            return False
+        if str(audit.get("media_resolution") or "") != str(gemini_settings["media_resolution"]):
+            return False
+    return True
 
 
 def _existing_result(
-    path: Path, start_seconds: float, end_seconds: float
+    path: Path,
+    start_seconds: float,
+    end_seconds: float,
+    feed_sha256: Optional[str] = None,
+    gemini_settings: Optional[Dict[str, Any]] = None,
 ) -> Optional[Tuple[Dict[str, Any], Dict[str, Any]]]:
     if not path.exists():
         return None
     audit = read_json(path)
-    if not sidecar_is_current(audit, start_seconds, end_seconds):
+    if not sidecar_is_current(audit, start_seconds, end_seconds, feed_sha256, gemini_settings):
         return None
-    tag = audit.get("passes", {}).get("contextual", {}).get("parsed_response")
-    verification = audit.get("passes", {}).get("blind_verification", {}).get("parsed_response")
-    if isinstance(tag, dict) and isinstance(verification, dict):
-        return tag, verification
-    return None
+    return (
+        audit["passes"]["contextual"]["parsed_response"],
+        audit["passes"]["blind_verification"]["parsed_response"],
+    )
 
 
 def tag_shots(
@@ -70,7 +97,11 @@ def tag_shots(
         sidecar_path = clips_dir / ("%s.json" % shot["shot_id"])
         start = float(shot["clip_start_seconds"])
         end = float(shot["clip_end_seconds"])
-        existing = None if force else _existing_result(sidecar_path, start, end)
+        existing = (
+            None
+            if force
+            else _existing_result(sidecar_path, start, end, feed_sha256, config["gemini"])
+        )
         if existing is not None:
             tag, verification = existing
             cached_count += 1

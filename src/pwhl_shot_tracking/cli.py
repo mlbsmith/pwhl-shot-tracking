@@ -275,6 +275,7 @@ def _feed_hash(config: Dict[str, Any]) -> str:
 
 
 def _pending_api_calls(rows: List[Dict[str, Any]], config: Dict[str, Any], force: bool) -> int:
+    feed_sha256 = _feed_hash(config)
     pending = 0
     for row in rows:
         if row.get("clip_start_seconds") in ("", None):
@@ -286,6 +287,8 @@ def _pending_api_calls(rows: List[Dict[str, Any]], config: Dict[str, Any], force
                 read_json(sidecar),
                 float(row["clip_start_seconds"]),
                 float(row["clip_end_seconds"]),
+                feed_sha256,
+                config["gemini"],
             )
         if not cached:
             pending += 2
@@ -327,7 +330,14 @@ def command_tag(args: argparse.Namespace) -> int:
             merged[str(row["shot_id"])] = row
     for row in tagged:
         merged[str(row["shot_id"])] = row
-    ordered = [merged[key] for key in (str(row["shot_id"]) for row in rows) if key in merged]
+    # A shot that lost its mapping in a re-sync must not survive via the
+    # previous CSV: its old tag describes a clip that no longer exists.
+    mapped_ids = {str(row["shot_id"]) for row in mapped}
+    ordered = [
+        merged[key]
+        for key in (str(row["shot_id"]) for row in rows)
+        if key in merged and key in mapped_ids
+    ]
     write_csv(tagged_path, ordered)
     write_json(work_path(config, "tag_report.json"), report)
     print("Tagged %d shots; %d cached; %d failed" % (len(tagged), report["cached_count"], report["failure_count"]))

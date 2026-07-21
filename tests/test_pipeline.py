@@ -6,11 +6,17 @@ from pwhl_shot_tracking.config import DEFAULT_CONFIG
 from pwhl_shot_tracking.pipeline import sidecar_is_current, tag_shots
 from pwhl_shot_tracking.utils import write_json
 
+GEMINI = DEFAULT_CONFIG["gemini"]
 
-def _complete_sidecar(start, end):
+
+def _complete_sidecar(start, end, feed_sha256="hash"):
     return {
         "status": "complete",
         "offsets": {"start_seconds": start, "end_seconds": end},
+        "feed_snapshot_sha256": feed_sha256,
+        "model_id": GEMINI["model"],
+        "fps": GEMINI["fps"],
+        "media_resolution": GEMINI["media_resolution"],
         "passes": {
             "contextual": {"parsed_response": {"royal_road": True, "shooter_number": "9"}},
             "blind_verification": {
@@ -34,6 +40,23 @@ class PipelineCacheTests(unittest.TestCase):
         self.assertFalse(sidecar_is_current(audit, 103.0, 117.0))
         self.assertFalse(sidecar_is_current({"status": "complete"}, 100.0, 114.0))
         self.assertFalse(sidecar_is_current(_complete_sidecar(100.0, 114.0) | {"status": "failed"}, 100.0, 114.0))
+
+    def test_sidecar_is_current_requires_matching_identity_and_responses(self):
+        audit = _complete_sidecar(100.0, 114.0)
+        self.assertTrue(sidecar_is_current(audit, 100.0, 114.0, "hash", GEMINI))
+        # A refreshed feed or changed Gemini configuration invalidates it.
+        self.assertFalse(sidecar_is_current(audit, 100.0, 114.0, "other-hash", GEMINI))
+        self.assertFalse(
+            sidecar_is_current(audit, 100.0, 114.0, "hash", dict(GEMINI, fps=1.0))
+        )
+        self.assertFalse(
+            sidecar_is_current(audit, 100.0, 114.0, "hash", dict(GEMINI, model="other-model"))
+        )
+        # A truncated sidecar (complete but missing a pass) is not reusable,
+        # so the call-count guard and the cache agree.
+        truncated = _complete_sidecar(100.0, 114.0)
+        del truncated["passes"]["blind_verification"]
+        self.assertFalse(sidecar_is_current(truncated, 100.0, 114.0))
 
     def test_tag_shots_serves_matching_sidecars_without_a_client(self):
         shot = {
