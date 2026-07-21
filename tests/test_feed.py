@@ -74,3 +74,34 @@ class FeedTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class RosterTests(unittest.TestCase):
+    def test_team_jersey_numbers_collects_every_player_reference(self):
+        from pwhl_shot_tracking.feed import team_jersey_numbers
+
+        payload = {
+            "GC": {
+                "Pxpverbose": [
+                    {
+                        "event": "shot",
+                        "team_id": "2",
+                        "player": {"team_id": "2", "jersey_number": "07"},
+                    },
+                    {
+                        "event": "faceoff",
+                        "winner": {"team_id": "2", "jersey_number": "21"},
+                        "loser": {"team_id": "3", "jersey_number": "29"},
+                    },
+                    {
+                        "event": "goal",
+                        "goal_scorer": {"team_id": "3", "jersey_number": "88"},
+                        "plus": [{"team_id": "3", "jersey_number": "17"}],
+                        "minus": [{"team_id": "2", "jersey_number": "4"}],
+                    },
+                ]
+            }
+        }
+        rosters = team_jersey_numbers(payload)
+        self.assertEqual({"7", "21", "4"}, rosters["2"])
+        self.assertEqual({"29", "88", "17"}, rosters["3"])

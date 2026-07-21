@@ -48,7 +48,10 @@ written to `game.json`, CSV output, or audit files.
 - Per-clip audit sidecars containing model, API surface, prompt/schema versions,
   source, feed hash, offsets, FPS, media resolution, requests, raw responses,
   retries, and manual disposition.
-- Automatic shooter, zone, timing, and clip-validity flags.
+- Automatic shooter, zone, timing, and clip-validity checks, split into
+  hard error flags and benign-explanation advisories (teammate attribution,
+  adjacent broadcast zones, multi-shot clip windows) using rosters derived
+  from the play-by-play feed.
 - Calibration against both known positives and hard negatives.
 - Full-candidate manual review, precision/recall thresholds, and a publish guard.
 - Dependency-free 1800×1050 PNG rendering. Arrows appear only when Gemini reports
@@ -117,6 +120,13 @@ python3 -m pwhl_shot_tracking sync --config game.json
 
 Inspect `work/<game>/sync/anchors.csv` and spot-check generated `review_url`
 values in `shots_synced.csv` before paying to tag the game.
+
+When `sync` reports unmapped shots, it writes `work/<game>/sync/gaps.json`
+describing the anchor-coverage gap behind each one and prints ready-to-run
+`discover-anchors --start --end` commands scoped to just those gaps. Targeted
+re-scans merge into the existing `anchors.csv` by default (`--replace`
+overwrites), so the recovery loop is: run the suggested scans, re-run `sync`,
+then `tag` only pays for the newly mapped shots.
 
 ### Calibration and tagging
 
@@ -187,6 +197,7 @@ feed/metadata.json            source URL, hash, and coordinate coverage
 shots.csv                     normalized denominator
 sync/anchors.csv              raw/discovered scorebug anchors
 sync/anchors_normalized.csv   active-run assignments
+sync/gaps.json                anchor-coverage gaps behind unmapped shots
 shots_synced.csv              VOD offsets and review links
 clips/<shot_id>.json          complete Gemini audit sidecar
 royal_road_<game>.csv         feed + model + automatic flags
@@ -206,6 +217,9 @@ PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=src \
 The tests are offline and do not use a Gemini key.
 
 ## Current limitations
+
+See [FINDINGS.md](FINDINGS.md) for the reviewed findings from the first full
+game run (game 347) and the runbook to a publishable chart.
 
 - Gemini scorebug discovery still needs human inspection; exact sync determines
   whether every downstream result is meaningful.

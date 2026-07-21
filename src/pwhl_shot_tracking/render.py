@@ -491,6 +491,94 @@ def _pass_origin(row: Dict[str, Any]) -> Optional[Tuple[float, float]]:
     return x, y
 
 
+LABEL_SCALE = 2
+LABEL_HEIGHT = 7 * LABEL_SCALE
+MARKER_RADIUS = 14
+
+
+def _boxes_overlap(a: Tuple[int, int, int, int], b: Tuple[int, int, int, int], pad: int = 2) -> bool:
+    return not (
+        a[2] + pad <= b[0] or b[2] + pad <= a[0] or a[3] + pad <= b[1] or b[3] + pad <= a[1]
+    )
+
+
+def _place_label(
+    px: int,
+    py: int,
+    text_width: int,
+    rink: Tuple[int, int, int, int],
+    obstacles: List[Tuple[int, int, int, int]],
+) -> Tuple[int, int]:
+    """Pick a label position beside the marker that stays on the ice and clear
+    of already-placed labels and markers. Falls back to the classic right-side
+    spot when every candidate collides."""
+    left, top, width, height = rink
+    gap = MARKER_RADIUS + 3
+    candidates = [
+        (px + gap, py - LABEL_HEIGHT // 2),
+        (px - gap - text_width, py - LABEL_HEIGHT // 2),
+        (px - text_width // 2, py - gap - LABEL_HEIGHT),
+        (px - text_width // 2, py + gap),
+    ]
+    for step in range(1, 9):
+        offset = step * (LABEL_HEIGHT + 6)
+        candidates.append((px + gap, py - LABEL_HEIGHT // 2 + offset))
+        candidates.append((px - gap - text_width, py - LABEL_HEIGHT // 2 + offset))
+        candidates.append((px + gap, py - LABEL_HEIGHT // 2 - offset))
+        candidates.append((px - gap - text_width, py - LABEL_HEIGHT // 2 - offset))
+
+    def in_bounds(x: int, y: int) -> bool:
+        return (
+            left + 6 <= x
+            and x + text_width <= left + width - 6
+            and top + 6 <= y
+            and y + LABEL_HEIGHT <= top + height - 6
+        )
+
+    for x, y in candidates:
+        if not in_bounds(x, y):
+            continue
+        box = (x, y, x + text_width, y + LABEL_HEIGHT)
+        if any(_boxes_overlap(box, other) for other in obstacles):
+            continue
+        obstacles.append(box)
+        return x, y
+    # Every candidate collides: accept an overlap, but never leave the ice.
+    x, y = next(((x, y) for x, y in candidates if in_bounds(x, y)), candidates[0])
+    obstacles.append((x, y, x + text_width, y + LABEL_HEIGHT))
+    return x, y
+
+
+def _team_colors(materialized: List[Dict[str, Any]], config: Dict[str, Any], teams: List[str]) -> Dict[str, Color]:
+    palette = config.get("team_colors", {})
+    defaults = [
+        parse_hex(palette.get("DEFAULT_HOME"), (109, 32, 119)),
+        parse_hex(palette.get("DEFAULT_AWAY"), (27, 54, 93)),
+    ]
+    team_is_home: Dict[str, bool] = {}
+    has_home_info = False
+    for row in materialized:
+        code = str(row.get("team_code") or row.get("team_id") or "TEAM")
+        value = str(row.get("is_home") or "").strip()
+        if value:
+            has_home_info = True
+        if code not in team_is_home:
+            team_is_home[code] = as_bool(value)
+    # Home/away mode is only trustworthy when it actually distinguishes the
+    # teams; degenerate data (both home, or one side missing the field) falls
+    # back to encounter order so two teams never share a default color.
+    if has_home_info and len({team_is_home.get(team) for team in teams}) < min(2, len(teams)):
+        has_home_info = False
+    colors: Dict[str, Color] = {}
+    for index, team in enumerate(teams):
+        if has_home_info:
+            default = defaults[0] if team_is_home.get(team) else defaults[1]
+        else:
+            default = defaults[index % len(defaults)]
+        colors[team] = parse_hex(palette.get(team), default)
+    return colors
+
+
 def render_shot_map(
     rows: Iterable[Dict[str, Any]],
     config: Dict[str, Any],
@@ -507,13 +595,7 @@ def render_shot_map(
         code = str(row.get("team_code") or row.get("team_id") or "TEAM")
         if code not in teams:
             teams.append(code)
-    colors: Dict[str, Color] = {}
-    defaults = [
-        parse_hex(config.get("team_colors", {}).get("DEFAULT_HOME"), (109, 32, 119)),
-        parse_hex(config.get("team_colors", {}).get("DEFAULT_AWAY"), (27, 54, 93)),
-    ]
-    for index, team in enumerate(teams):
-        colors[team] = parse_hex(config.get("team_colors", {}).get(team), defaults[index % len(defaults)])
+    colors = _team_colors(materialized, config, teams)
 
     royal_rows = []
     for row in materialized:
@@ -526,29 +608,47 @@ def render_shot_map(
         final_value = row.get("final_royal_road")
         royal = as_bool(final_value) if final_value not in ("", None) else as_bool(row.get("tag_royal_road"))
         if royal:
-            royal_rows.append(row)
+            royal_rows.append((row, px, py))
 
-    for row in royal_rows:
-        x = float(row["x"])
-        y = float(row["y"])
-        px, py = _clamp_to_rink(*_feed_to_canvas(x, y, rink), rink)
+    # Arrows first, then markers, then labels: later strokes never cover a
+    # label, and labels can dodge every marker on the ice.
+    arrow_count = 0
+    for row, px, py in royal_rows:
         team = str(row.get("team_code") or row.get("team_id") or "TEAM")
-        color = colors[team]
         origin = _pass_origin(row)
-        if origin is not None:
-            ox, oy = _clamp_to_rink(
-                *_feed_to_canvas(origin[0], origin[1], rink),
-                rink,
-            )
-            canvas.arrow(ox, oy, px, py, color, 5)
-        canvas.circle(px, py, 14, (255, 255, 255), True)
-        canvas.circle(px, py, 11, color, True)
+        if origin is None:
+            continue
+        # A royal-road pass crosses the net-to-net centre line by definition;
+        # an arrow whose drawn geometry stays on one side would assert a
+        # crossing that is not there, so it is suppressed as unreliable.
+        shot_y = float(row["y"])
+        if (origin[1] - 150.0) * (shot_y - 150.0) > 0:
+            continue
+        ox, oy = _clamp_to_rink(
+            *_feed_to_canvas(origin[0], origin[1], rink),
+            rink,
+        )
+        canvas.arrow(ox, oy, px, py, colors[team], 5)
+        arrow_count += 1
+
+    obstacles: List[Tuple[int, int, int, int]] = []
+    for row, px, py in royal_rows:
+        team = str(row.get("team_code") or row.get("team_id") or "TEAM")
+        canvas.circle(px, py, MARKER_RADIUS, (255, 255, 255), True)
+        canvas.circle(px, py, 11, colors[team], True)
+        obstacles.append((px - MARKER_RADIUS, py - MARKER_RADIUS, px + MARKER_RADIUS, py + MARKER_RADIUS))
+
+    for row, px, py in royal_rows:
         number = str(row.get("shooter_number") or "")
-        if number:
-            canvas.text(px + 17, py - 10, "#" + number, (24, 35, 43), 2)
+        if not number:
+            continue
+        label = "#" + number
+        text_width = len(label) * 6 * LABEL_SCALE
+        lx, ly = _place_label(px, py, text_width, rink, obstacles)
+        canvas.text(lx, ly, label, (24, 35, 43), LABEL_SCALE)
 
     counts = {team: 0 for team in teams}
-    for row in royal_rows:
+    for row, _, _ in royal_rows:
         team = str(row.get("team_code") or row.get("team_id") or "TEAM")
         counts[team] = counts.get(team, 0) + 1
     headline = "ROYAL ROAD CHANCES"
@@ -561,7 +661,7 @@ def render_shot_map(
     if not publishable:
         canvas.rect(0, 0, 1800, 32, (174, 43, 55), True)
         canvas.text(530, 6, "DRAFT - MANUAL REVIEW OR THRESHOLDS INCOMPLETE", (255, 255, 255), 3)
-    canvas.text(95, 1010, "ALL SHOTS FAINT. ROYAL ROAD CHANCES HIGHLIGHTED. ARROWS ONLY WHEN GEOMETRY IS MEDIUM OR HIGH.", (65, 80, 91), 2)
+    canvas.text(95, 1010, "ALL SHOTS FAINT. ROYAL ROAD CHANCES HIGHLIGHTED. ARROWS ONLY FOR CONFIDENT GEOMETRY THAT CROSSES THE ROYAL ROAD.", (65, 80, 91), 2)
     canvas.save_png(output_path)
     return {
         "output_path": str(output_path),
@@ -569,6 +669,7 @@ def render_shot_map(
         "height": canvas.height,
         "shot_count": len(materialized),
         "royal_road_count": len(royal_rows),
+        "arrow_count": arrow_count,
         "team_counts": counts,
         "publishable": publishable,
     }

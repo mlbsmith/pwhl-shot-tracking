@@ -46,6 +46,45 @@ def extract_events(payload: Dict[str, Any]) -> List[Dict[str, Any]]:
     raise ValueError("HockeyTech response does not contain a pxpverbose event list")
 
 
+def team_jersey_numbers(payload: Dict[str, Any]) -> Dict[str, Set[str]]:
+    """Derive each team's jersey numbers from every player reference in the
+    play-by-play feed. The pxpverbose tab carries no roster block, but shots,
+    goals, faceoffs, hits, and penalties collectively cover the dressed lineup."""
+    numbers: Dict[str, Set[str]] = {}
+    for event in extract_events(payload):
+        references = []
+        for key in (
+            "player",
+            "player1",
+            "player2",
+            "goal_scorer",
+            "assist1_player",
+            "assist2_player",
+            "goalie",
+            "winner",
+            "loser",
+            "plus",
+            "minus",
+            "player_penalized_info",
+            "player_served_info",
+        ):
+            value = event.get(key)
+            if isinstance(value, dict):
+                references.append(value)
+            elif isinstance(value, list):
+                references.extend(item for item in value if isinstance(item, dict))
+        for reference in references:
+            team = str(reference.get("team_id") or "")
+            jersey = str(reference.get("jersey_number") or "").lstrip("0")
+            if team and jersey:
+                numbers.setdefault(team, set()).add(jersey)
+        jersey = str(event.get("jersey_number") or "").lstrip("0")
+        team = str(event.get("team_id") or "")
+        if team and jersey:
+            numbers.setdefault(team, set()).add(jersey)
+    return numbers
+
+
 def _period_length(period: int, config: Dict[str, Any]) -> int:
     clock = config["clock"]
     if period <= 3:

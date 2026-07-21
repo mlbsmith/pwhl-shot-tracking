@@ -6,9 +6,17 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from .clock import anchors_as_rows, assign_active_runs, load_anchors, synchronize_shots
+from .clock import (
+    anchors_as_rows,
+    assign_active_runs,
+    load_anchors,
+    merge_anchors,
+    read_anchor_rows,
+    sync_gap_report,
+    synchronize_shots,
+)
 from .config import DEFAULT_CONFIG, SHOT_UNIVERSES, create_config, load_config, work_path
-from .feed import fetch_game_feed, normalize_shots
+from .feed import fetch_game_feed, normalize_shots, team_jersey_numbers
 from .gemini import GeminiClient, discover_anchors
 from .pipeline import sidecar_is_current, tag_shots
 from .render import render_shot_map
@@ -123,6 +131,7 @@ def command_run_game(args: argparse.Namespace) -> int:
                     end=None,
                     chunk_seconds=args.chunk_seconds,
                     output=None,
+                    replace=False,
                     yes=True,
                 )
             )
@@ -225,8 +234,15 @@ def command_discover_anchors(args: argparse.Namespace) -> int:
         audits.append(str(audit_path))
         print("Discovered %d anchors in %.1f-%.1fs" % (len(discovered), cursor, chunk_end))
         cursor = chunk_end
-    normalized = assign_active_runs(anchors, float(config["clock"]["max_stoppage_gap_seconds"]))
     output_path = Path(args.output) if args.output else work_path(config, "sync", "anchors.csv")
+    existing = []
+    if output_path.exists() and not args.replace:
+        existing = read_anchor_rows(output_path)
+        print("Merging %d newly discovered anchors into %d existing" % (len(anchors), len(existing)))
+    normalized = assign_active_runs(
+        merge_anchors(existing, anchors),
+        float(config["clock"]["max_stoppage_gap_seconds"]),
+    )
     write_csv(output_path, anchors_as_rows(normalized))
     write_json(
         work_path(config, "sync", "discovery_report.json"),
@@ -260,8 +276,27 @@ def command_sync(args: argparse.Namespace) -> int:
     write_csv(work_path(config, "sync", "anchors_normalized.csv"), anchors_as_rows(anchors))
     write_json(work_path(config, "sync", "report.json"), report)
     print("Sync status: %s" % report["sync_status_counts"])
+    duration = config.get("game_resolution", {}).get("video", {}).get("duration_seconds")
+    gaps = sync_gap_report(synchronized, anchors, duration)
+    # Always rewritten so a recovered sync does not leave stale scan advice.
+    write_json(work_path(config, "sync", "gaps.json"), gaps)
     if report["sync_status_counts"].get("unmapped", 0):
-        print("WARNING: unmapped shots cannot be tagged; add anchors for their active-clock runs", file=sys.stderr)
+        print(
+            "WARNING: %d unmapped shots cannot be tagged; anchor-coverage gaps are in sync/gaps.json"
+            % gaps["unmapped_count"],
+            file=sys.stderr,
+        )
+        for scan in gaps["suggested_scans"]:
+            print(
+                "  scan %.0f-%.0fs to recover %s: %s"
+                % (
+                    scan["start_seconds"],
+                    scan["end_seconds"],
+                    ",".join(scan["shot_ids"]),
+                    scan["command"],
+                ),
+                file=sys.stderr,
+            )
     return 0
 
 
@@ -272,6 +307,18 @@ def _selected_rows(rows: List[Dict[str, Any]], limit: Optional[int]) -> List[Dic
 def _feed_hash(config: Dict[str, Any]) -> str:
     metadata_path = work_path(config, "feed", "metadata.json")
     return str(read_json(metadata_path).get("feed_sha256") or "")
+
+
+def _feed_rosters(config: Dict[str, Any]):
+    raw_path = work_path(config, "feed", "raw.json")
+    if not raw_path.exists():
+        return None
+    try:
+        # An empty roster would downgrade every mismatch to "unrecognized";
+        # fall back to the strict legacy flag instead.
+        return team_jersey_numbers(read_json(raw_path)) or None
+    except (ValueError, OSError):
+        return None
 
 
 def _pending_api_calls(rows: List[Dict[str, Any]], config: Dict[str, Any], force: bool) -> int:
@@ -321,6 +368,7 @@ def command_tag(args: argparse.Namespace) -> int:
         work_path(config, "clips"),
         force=args.force,
         limit=args.limit,
+        rosters=_feed_rosters(config),
     )
     report["created_at"] = _utc_now()
     tagged_path = _tagged_path(config)
@@ -371,6 +419,7 @@ def command_calibrate(args: argparse.Namespace) -> int:
         _feed_hash(config),
         work_path(config, "clips"),
         force=args.force,
+        rosters=_feed_rosters(config),
     )
     tp = fp = fn = tn = 0
     for row in tagged:
@@ -575,6 +624,11 @@ def build_parser() -> argparse.ArgumentParser:
     discover.add_argument("--end", type=float, help="defaults to the duration detected during init")
     discover.add_argument("--chunk-seconds", type=float, default=300.0)
     discover.add_argument("--output")
+    discover.add_argument(
+        "--replace",
+        action="store_true",
+        help="overwrite existing anchors instead of merging newly discovered ones in",
+    )
     discover.add_argument("--yes", action="store_true", help="confirm billable Gemini calls")
     discover.set_defaults(func=command_discover_anchors)
 
