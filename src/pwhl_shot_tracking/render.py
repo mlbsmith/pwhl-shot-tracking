@@ -520,23 +520,31 @@ def _place_label(
         (px - text_width // 2, py - gap - LABEL_HEIGHT),
         (px - text_width // 2, py + gap),
     ]
-    for step in range(1, 6):
+    for step in range(1, 9):
         offset = step * (LABEL_HEIGHT + 6)
         candidates.append((px + gap, py - LABEL_HEIGHT // 2 + offset))
         candidates.append((px - gap - text_width, py - LABEL_HEIGHT // 2 + offset))
         candidates.append((px + gap, py - LABEL_HEIGHT // 2 - offset))
         candidates.append((px - gap - text_width, py - LABEL_HEIGHT // 2 - offset))
+
+    def in_bounds(x: int, y: int) -> bool:
+        return (
+            left + 6 <= x
+            and x + text_width <= left + width - 6
+            and top + 6 <= y
+            and y + LABEL_HEIGHT <= top + height - 6
+        )
+
     for x, y in candidates:
-        if x < left + 6 or x + text_width > left + width - 6:
-            continue
-        if y < top + 6 or y + LABEL_HEIGHT > top + height - 6:
+        if not in_bounds(x, y):
             continue
         box = (x, y, x + text_width, y + LABEL_HEIGHT)
         if any(_boxes_overlap(box, other) for other in obstacles):
             continue
         obstacles.append(box)
         return x, y
-    x, y = candidates[0]
+    # Every candidate collides: accept an overlap, but never leave the ice.
+    x, y = next(((x, y) for x, y in candidates if in_bounds(x, y)), candidates[0])
     obstacles.append((x, y, x + text_width, y + LABEL_HEIGHT))
     return x, y
 
@@ -556,6 +564,11 @@ def _team_colors(materialized: List[Dict[str, Any]], config: Dict[str, Any], tea
             has_home_info = True
         if code not in team_is_home:
             team_is_home[code] = as_bool(value)
+    # Home/away mode is only trustworthy when it actually distinguishes the
+    # teams; degenerate data (both home, or one side missing the field) falls
+    # back to encounter order so two teams never share a default color.
+    if has_home_info and len({team_is_home.get(team) for team in teams}) < min(2, len(teams)):
+        has_home_info = False
     colors: Dict[str, Color] = {}
     for index, team in enumerate(teams):
         if has_home_info:

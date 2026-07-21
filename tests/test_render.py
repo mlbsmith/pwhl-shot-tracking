@@ -79,6 +79,25 @@ class RenderTests(unittest.TestCase):
         # Without home/away information the encounter-order fallback applies.
         colors = _team_colors([{"team_code": "A"}, {"team_code": "B"}], config, ["A", "B"])
         self.assertNotEqual(colors["A"], colors["B"])
+        # Degenerate venue data (both teams home) also falls back rather than
+        # painting both teams the same color.
+        rows = [{"team_code": "A", "is_home": "True"}, {"team_code": "B", "is_home": "True"}]
+        colors = _team_colors(rows, config, ["A", "B"])
+        self.assertNotEqual(colors["A"], colors["B"])
+
+    def test_label_fallback_stays_on_the_ice_when_everything_collides(self):
+        rink = (90, 220, 1620, 689)
+        left, top, width, height = rink
+        obstacles = []
+        # Saturate a marker position against the right boards so no candidate
+        # is collision-free, then confirm the fallback is still in bounds.
+        px, py = left + width - 20, top + 300
+        for _ in range(40):
+            x, y = _place_label(px, py, 36, rink, obstacles)
+        self.assertGreaterEqual(x, left + 6)
+        self.assertLessEqual(x + 36, left + width - 6)
+        self.assertGreaterEqual(y, top + 6)
+        self.assertLessEqual(y + LABEL_HEIGHT, top + height - 6)
 
     def test_arrows_require_geometry_that_crosses_the_royal_road(self):
         def royal_row(shot_id, y, lateral_pct):
